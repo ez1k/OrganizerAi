@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html>
+<body>
+    <h2>Time Assistant</h2>
+    <input id="input" type="text" />
+    <button onclick="send()">Send</button>
+    <p id="output"></p>
+
+    <script>
+        async function send() {
+            const text = document.getElementById("input").value;
+            const res = await fetch("http://127.0.0.1:8000/chat?prompt=" + text, {
+                method: "POST"
+            });
+            const data = await res.json();
+            document.getElementById("output").innerText = data.response;
+        }
+    </script>
+</body>
+</html>
