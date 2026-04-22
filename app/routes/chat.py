@@ -1,13 +1,14 @@
 from fastapi import APIRouter
-from app.routes.tasks import chat
+from app.schemas import ChatRequest
 from app.services.llm_service import ask_llm
 from app.services.event_service import save_event
 import json
 
 router = APIRouter()
 
+
 @router.post("/chat")
-def chat(request: chat):
+def chat_endpoint(request: ChatRequest):
     prompt = f"""
 Zamień tekst na JSON wydarzenia:
 
@@ -23,7 +24,11 @@ Zwróć WYŁĄCZNIE JSON:
 """
 
     try:
-        response = ask_llm(prompt)
+        response = ask_llm(prompt).strip()
+
+        # cleanup LLM output (very important)
+        response = response.replace("```json", "").replace("```", "")
+
         event = json.loads(response)
 
         save_event(event)

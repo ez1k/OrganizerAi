@@ -1,11 +1,9 @@
 from fastapi import APIRouter
-from app.backend.database import engine
-from sqlalchemy import text
+from app.services.event_service import get_events
 
 router = APIRouter()
 
+
 @router.get("/events")
-def get_events():
-    with engine.connect() as conn:
-        result = conn.execute(text("SELECT * FROM events"))
-        return [dict(row._mapping) for row in result]
+def list_events():
+    return get_events()
