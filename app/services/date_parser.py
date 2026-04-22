@@ -1,22 +1,25 @@
-from datetime import datetime, timedelta
+import dateparser
+from datetime import timedelta
 
-def build_datetime(date_hint: str):
-    now = datetime.now()
 
-    hint = date_hint.lower()
+def parse_datetime(text: str):
+    dt = dateparser.parse(
+        text,
+        languages=["pl"],
+        settings={
+            "TIMEZONE": "Europe/Warsaw",
+            "RETURN_AS_TIMEZONE_AWARE": False
+        }
+    )
 
-    if "jutro" in hint:
-        base = now + timedelta(days=1)
-    elif "pojutrze" in hint:
-        base = now + timedelta(days=2)
-    else:
-        base = now
+    if not dt:
+        raise ValueError(f"Cannot parse date: {text}")
 
-    if "rano" in hint:
-        hour = 9
-    elif "wieczorem" in hint:
-        hour = 18
-    else:
-        hour = 18
+    return dt
 
-    return base.replace(hour=hour, minute=0, second=0, microsecond=0)
+
+def build_event_time(date_hint: str, duration_minutes: int = 60):
+    start = parse_datetime(date_hint)
+    end = start + timedelta(minutes=duration_minutes)
+
+    return start, end
