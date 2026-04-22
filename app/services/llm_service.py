@@ -23,4 +23,10 @@ def ask_llm(prompt: str) -> str:
 
     response.raise_for_status()
 
-    return response.json()["response"]
+    data = response.json()
+
+    # 🔥 IMPORTANT: safety check
+    if "response" not in data:
+        raise ValueError(f"Invalid Ollama response: {data}")
+
+    return data["response"]
