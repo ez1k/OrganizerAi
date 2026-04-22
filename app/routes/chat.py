@@ -8,8 +8,12 @@ router = APIRouter()
 
 
 def clean_json(text: str) -> str:
+    if not text:
+        raise ValueError("Empty response from LLM")
+
     text = text.strip()
     text = text.replace("```json", "").replace("```", "")
+
     return text
 
 
@@ -17,14 +21,12 @@ def clean_json(text: str) -> str:
 def chat_endpoint(request: ChatRequest):
 
     prompt = f"""
-Jesteś asystentem kalendarza.
+Zamień tekst na JSON wydarzenia.
 
-Zamień tekst użytkownika na JSON wydarzenia.
-
-TEKST:
+Tekst:
 {request.message}
 
-ZWRÓĆ WYŁĄCZNIE JSON:
+ZWRÓĆ TYLKO JSON:
 
 {{
   "title": "string",
@@ -33,25 +35,33 @@ ZWRÓĆ WYŁĄCZNIE JSON:
   "description": "string"
 }}
 
-Jeśli brak daty, załóż logicznie.
+NIE dodawaj żadnego tekstu poza JSON.
 """
 
+    response = ask_llm(prompt)
+
     try:
-        response = ask_llm(prompt)
         response = clean_json(response)
+
+        # safety check
+        if not response.strip():
+            return {"status": "error", "message": "Empty LLM response"}
 
         event = json.loads(response)
 
         save_event(event)
 
+        return {"status": "ok", "event": event}
+
+    except json.JSONDecodeError as e:
         return {
-            "status": "ok",
-            "event": event
+            "status": "error",
+            "message": "Invalid JSON from LLM",
+            "raw": response
         }
 
     except Exception as e:
         return {
             "status": "error",
-            "message": str(e),
-            "raw": response if "response" in locals() else None
+            "message": str(e)
         }
