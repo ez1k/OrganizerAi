@@ -2,7 +2,7 @@ fastapi
 uvicorn
 pydantic
 sqlalchemy
-sqlite3
+streamlit
 requests
 transformers
 torch
