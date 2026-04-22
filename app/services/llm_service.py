@@ -5,19 +5,17 @@ MODEL = "mistral"
 
 
 def ask_llm(prompt: str) -> str:
-    payload = {
-        "model": MODEL,
-        "prompt": prompt,
-        "stream": False,
-        "options": {
-            "temperature": 0.1,
-            "num_predict": 200
-        }
-    }
-
     response = requests.post(
         OLLAMA_URL,
-        json=payload,
+        json={
+            "model": MODEL,
+            "prompt": prompt,
+            "stream": False,
+            "options": {
+                "temperature": 0.1,
+                "num_predict": 200
+            }
+        },
         timeout=120
     )
 
@@ -25,8 +23,9 @@ def ask_llm(prompt: str) -> str:
 
     data = response.json()
 
-    # 🔥 IMPORTANT: safety check
-    if "response" not in data:
-        raise ValueError(f"Invalid Ollama response: {data}")
+    result = data.get("response", "")
 
-    return data["response"]
+    if not result or result.strip() == "":
+        raise ValueError("Empty response from Ollama")
+
+    return result
