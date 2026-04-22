@@ -1,4 +1,4 @@
-from app.database import engine
+from app.backend.database import engine
 from sqlalchemy import text
 
 def save_event(event: dict):

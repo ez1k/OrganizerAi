@@ -1,13 +1,13 @@
 from fastapi import APIRouter
-from app.schemas import ChatRequest
-from app.llm import ask_llm
+from app.routes.tasks import chat
+from app.services.llm_service import ask_llm
 from app.services.event_service import save_event
 import json
 
 router = APIRouter()
 
 @router.post("/chat")
-def chat(request: ChatRequest):
+def chat(request: chat):
     prompt = f"""
 Zamień tekst na JSON wydarzenia:
 
