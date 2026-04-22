@@ -10,6 +10,7 @@ def ask_llm(prompt: str) -> str:
         "prompt": prompt,
         "stream": False,
         "options": {
+            "temperature": 0.1,
             "num_predict": 200
         }
     }
