@@ -9,4 +9,4 @@ app.include_router(events.router)
 
 @app.get("/")
 def root():
-    return {"message": "Time Assistant API działa"}
+    return {"message": "AI Organizer API działa"}
