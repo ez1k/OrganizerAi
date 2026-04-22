@@ -20,7 +20,9 @@ Wyciągnij dane z tekstu:
 
 {request.message}
 
-Zwróć JSON:
+ZWRÓĆ WYŁĄCZNIE POPRAWNY JSON.
+BEZ TEKSTU PRZED I PO.
+JEŚLI NIE WIESZ → ZWRÓĆ PUSTY OBIEKT 
 {{
   "title": "string",
   "date_hint": "np. jutro o 18, piątek 15:00",
