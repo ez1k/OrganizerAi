@@ -32,7 +32,16 @@ Tylko JSON.
 """
 
     response = ask_llm(prompt)
-    data = json.loads(clean_json(response))
+    cleaned = clean_json(response)
+
+    try:
+        data = json.loads(cleaned)
+    except json.JSONDecodeError:
+        return {
+            "status": "error",
+            "message": "Invalid JSON from LLM",
+            "raw": cleaned
+        }
 
     start, end = build_event_time(
         data["date_hint"],
