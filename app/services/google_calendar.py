@@ -1,3 +1,5 @@
+from datetime import datetime, timedelta
+
 from googleapiclient.discovery import build
 from google_auth_oauthlib.flow import InstalledAppFlow
 from google.auth.transport.requests import Request
@@ -22,10 +24,7 @@ def _run_oauth_flow():
             "w katalogu, z którego uruchamiana jest aplikacja."
         )
 
-    flow = InstalledAppFlow.from_client_secrets_file(
-        CREDENTIALS_FILE,
-        SCOPES,
-    )
+    flow = InstalledAppFlow.from_client_secrets_file(CREDENTIALS_FILE, SCOPES)
     creds = flow.run_local_server(port=0)
     _save_credentials(creds)
     return creds
@@ -39,7 +38,6 @@ def get_calendar_service():
             with open(TOKEN_FILE, "rb") as token:
                 creds = pickle.load(token)
         except (EOFError, pickle.PickleError, AttributeError, ValueError, TypeError):
-            # A corrupted token file is equivalent to having no credentials.
             try:
                 os.remove(TOKEN_FILE)
             except OSError:
@@ -55,8 +53,6 @@ def get_calendar_service():
             _save_credentials(creds)
             return build("calendar", "v3", credentials=creds)
         except RefreshError:
-            # Google rejected the refresh token (for example invalid_grant).
-            # Remove the unusable cached credentials and start OAuth again.
             try:
                 os.remove(TOKEN_FILE)
             except OSError:
@@ -88,3 +84,53 @@ def create_event(event: dict):
     ).execute()
 
     return created_event.get("htmlLink")
+
+
+def search_events(
+    title: str | None = None,
+    start: datetime | None = None,
+    end: datetime | None = None,
+    max_results: int = 10,
+) -> list[dict]:
+    """Find events in the primary calendar by title and/or time range."""
+    service = get_calendar_service()
+
+    if start is None:
+        start = datetime.now()
+    if end is None:
+        end = start + timedelta(days=30)
+
+    params = {
+        "calendarId": "primary",
+        "timeMin": start.isoformat() + "Z" if start.tzinfo is None else start.isoformat(),
+        "timeMax": end.isoformat() + "Z" if end.tzinfo is None else end.isoformat(),
+        "singleEvents": True,
+        "orderBy": "startTime",
+        "maxResults": max_results,
+    }
+
+    if title:
+        params["q"] = title.strip()
+
+    response = service.events().list(**params).execute()
+    events = []
+
+    for item in response.get("items", []):
+        start_data = item.get("start", {})
+        end_data = item.get("end", {})
+        events.append({
+            "id": item.get("id"),
+            "title": item.get("summary", ""),
+            "description": item.get("description", ""),
+            "start": start_data.get("dateTime") or start_data.get("date"),
+            "end": end_data.get("dateTime") or end_data.get("date"),
+            "calendar_link": item.get("htmlLink"),
+        })
+
+    return events
+
+
+def delete_event(event_id: str):
+    """Delete a previously found event by its Google Calendar event ID."""
+    service = get_calendar_service()
+    service.events().delete(calendarId="primary", eventId=event_id).execute()
