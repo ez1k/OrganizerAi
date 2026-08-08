@@ -12,34 +12,23 @@ from app.schemas import ChatRequest
 
 router = APIRouter()
 
-CONFIRMATION_RE = re.compile(
-    r"^(?:tak|tak,|potwierdzam|potwierdź|dodaj|zapisz|jasne|zgadza się|zgadza sie|ok|okej|okay|yes)[.!\s]*$",
-    re.IGNORECASE,
-)
-
+CONFIRMATION_RE = re.compile(r"^(?:tak|tak,|potwierdzam|potwierdź|dodaj|zapisz|jasne|zgadza się|zgadza sie|ok|okej|okay|yes)[.!\s]*$", re.IGNORECASE)
 
 def _is_confirmation(message: str) -> bool:
     normalized = " ".join(message.strip().lower().split())
-    if CONFIRMATION_RE.fullmatch(normalized):
-        return True
-    return normalized.startswith("tak") and "potwierdz" in normalized
-
+    return bool(CONFIRMATION_RE.fullmatch(normalized) or (normalized.startswith("tak") and "potwierdz" in normalized))
 
 def _is_number_selection(message: str) -> int | None:
     match = re.fullmatch(r"\s*(\d+)\s*[.]?\s*", message)
     return int(match.group(1)) if match else None
 
-
 def _merge_event(draft, candidate):
-    if not draft and not candidate:
-        return None
     merged = dict(draft or {})
     for key in ("title", "date_hint", "time_hint", "duration_minutes", "description"):
         value = candidate.get(key) if candidate else None
         if value not in (None, ""):
             merged[key] = value
-    return merged
-
+    return merged or None
 
 def _merge_search(draft, candidate):
     merged = dict(draft or {})
@@ -49,12 +38,8 @@ def _merge_search(draft, candidate):
             merged[key] = value
     return merged
 
-
 def _missing_event(event):
-    if not event:
-        return ["title", "date_hint", "time_hint"]
-    return [key for key in ("title", "date_hint", "time_hint") if not str(event.get(key, "")).strip()]
-
+    return [key for key in ("title", "date_hint", "time_hint") if not event or not str(event.get(key, "")).strip()]
 
 def _build_event(data):
     title = str(data.get("title", "")).strip()
@@ -64,48 +49,62 @@ def _build_event(data):
     if not title or not date_hint or not time_hint:
         raise ValueError("Brakuje nazwy, dnia lub godziny wydarzenia.")
     start, end = build_event_time(f"{date_hint} o {time_hint}", duration)
-    return {
-        "title": title,
-        "description": str(data.get("description", "")).strip(),
-        "start": start.isoformat(),
-        "end": end.isoformat(),
-    }
+    return {"title": title, "description": str(data.get("description", "")).strip(), "start": start.isoformat(), "end": end.isoformat()}
 
-
-def _day_range(date_hint: str):
+def _day_range(date_hint):
     start, _ = build_event_time(f"{date_hint} o 00:00", 1)
     return start, start + timedelta(days=1)
 
+def _normalize_time_hint(value):
+    if not value:
+        return None
+    text = str(value).strip().lower().replace(".", ":")
+    text = re.sub(r"^o\s*", "", text)
+    match = re.fullmatch(r"(\d{1,2})(?::(\d{2}))?", text)
+    if not match:
+        return text
+    hour = int(match.group(1))
+    minute = int(match.group(2) or 0)
+    if not 0 <= hour <= 23 or not 0 <= minute <= 59:
+        raise ValueError("Nieprawidłowa godzina wydarzenia.")
+    return f"{hour:02d}:{minute:02d}"
+
+def _normalize_search_criteria(criteria):
+    normalized = dict(criteria or {})
+    title = str(normalized.get("title", "")).strip()
+    date_hint = str(normalized.get("date_hint", "")).strip()
+    time_hint = _normalize_time_hint(normalized.get("time_hint"))
+    normalized["title"] = title or None
+    normalized["date_hint"] = date_hint or None
+    normalized["time_hint"] = time_hint
+    return normalized
 
 def _search_calendar(criteria):
-    title = str(criteria.get("title", "")).strip() or None
-    date_hint = str(criteria.get("date_hint", "")).strip()
-    time_hint = str(criteria.get("time_hint", "")).strip()
+    criteria = _normalize_search_criteria(criteria)
+    title = criteria["title"]
+    date_hint = criteria["date_hint"]
+    time_hint = criteria["time_hint"]
 
-    if date_hint:
-        day_start, day_end = _day_range(date_hint)
-        if time_hint:
-            target, _ = build_event_time(f"{date_hint} o {time_hint}", 1)
-            day_start = target - timedelta(minutes=1)
-            day_end = target + timedelta(minutes=1)
+    if not date_hint:
+        return search_events(title=title, max_results=20)
+
+    day_start, day_end = _day_range(date_hint)
+    if not time_hint:
         return search_events(title=title, start=day_start, end=day_end, max_results=20)
 
-    return search_events(title=title, max_results=20)
-
+    target, _ = build_event_time(f"{date_hint} o {time_hint}", 1)
+    # Search a small window around the requested time. Do not require an
+    # exact timestamp because Google Calendar events may contain seconds.
+    return search_events(title=title, start=target - timedelta(minutes=2), end=target + timedelta(minutes=2), max_results=20)
 
 def _format_events(events):
     if not events:
         return "Nie znalazłem żadnych wydarzeń."
-    lines = [
-        f"{index}. {event['title']} — {event.get('start', '?')} – {event.get('end', '?')}"
-        for index, event in enumerate(events, 1)
-    ]
+    lines = [f"{index}. {event['title']} — {event.get('start', '?')} – {event.get('end', '?')}" for index, event in enumerate(events, 1)]
     return "Znalazłem:\n" + "\n".join(lines)
-
 
 class CalendarAuthRequired(Exception):
     pass
-
 
 def _calendar_call(fn, *args, **kwargs):
     try:
@@ -113,11 +112,9 @@ def _calendar_call(fn, *args, **kwargs):
     except (FileNotFoundError, RefreshError) as exc:
         raise CalendarAuthRequired(str(exc)) from exc
 
-
 def _last_matches(state):
     matches = state.get("matches") if isinstance(state, dict) else None
     return matches if isinstance(matches, list) else []
-
 
 @router.post("/chat")
 def chat_endpoint(request: ChatRequest):
@@ -130,11 +127,7 @@ def chat_endpoint(request: ChatRequest):
             if 1 <= selection <= len(matches):
                 selected = matches[selection - 1]
                 if state.get("operation") == "delete":
-                    return {
-                        "status": "calendar_delete_confirmation",
-                        "message": f"Wybrano „{selected['title']}”. Czy chcesz je usunąć?",
-                        "event": {**state, "matches": [selected], "selected_event_id": selected.get("id")},
-                    }
+                    return {"status": "calendar_delete_confirmation", "message": f"Wybrano „{selected['title']}”. Czy chcesz je usunąć?", "event": {**state, "matches": [selected], "selected_event_id": selected.get("id")}}
                 return {"status": "calendar_search", "message": _format_events([selected]), "event": state}
 
         if state.get("operation") == "delete" and state.get("matches") and _is_confirmation(request.message):
@@ -154,11 +147,7 @@ def chat_endpoint(request: ChatRequest):
             duplicate = result.get("duplicate") if isinstance(result, dict) else None
             if duplicate and not allow_duplicate:
                 duplicate_state = {**state, "allow_duplicate": True, "duplicate_event": duplicate}
-                return {
-                    "status": "calendar_duplicate_confirmation",
-                    "message": f"Takie wydarzenie już istnieje: „{duplicate['title']}” o {duplicate.get('start', '?')}. Czy chcesz mimo to dodać kolejne?",
-                    "event": duplicate_state,
-                }
+                return {"status": "calendar_duplicate_confirmation", "message": f"Takie wydarzenie już istnieje: „{duplicate['title']}” o {duplicate.get('start', '?')}. Czy chcesz mimo to dodać kolejne?", "event": duplicate_state}
             link = result.get("calendar_link") if isinstance(result, dict) else result
             return {"status": "confirmed", "message": f"Dodane: {event['title']}.", "event": event, "calendar_link": link}
 
@@ -169,11 +158,7 @@ def chat_endpoint(request: ChatRequest):
         reply = result.get("reply", "")
 
         if operation == "external_search":
-            return {
-                "status": "external_search",
-                "message": "To pytanie dotyczy informacji spoza kalendarza. Nie mam jeszcze podłączonego wyszukiwania internetowego, więc nie będę zgadywać odpowiedzi.",
-                "event": None,
-            }
+            return {"status": "external_search", "message": "To pytanie dotyczy informacji spoza kalendarza. Nie mam jeszcze podłączonego wyszukiwania internetowego, więc nie będę zgadywać odpowiedzi.", "event": None}
 
         if operation == "search":
             criteria = _merge_search(state.get("search") if state.get("operation") == "search" else None, result.get("search"))
@@ -183,6 +168,9 @@ def chat_endpoint(request: ChatRequest):
         if operation == "delete":
             previous_matches = _last_matches(state)
             criteria = _merge_search(state.get("search") if state.get("operation") in {"search", "delete"} else None, result.get("search"))
+            criteria = _normalize_search_criteria(criteria)
+            # Reuse previous search results only when the delete request does
+            # not add any criteria; otherwise perform a fresh targeted search.
             events = previous_matches if previous_matches and not any(criteria.values()) else _calendar_call(_search_calendar, criteria)
             if not events:
                 return {"status": "chat", "message": "Nie znalazłem pasującego wydarzenia do usunięcia.", "event": None}
