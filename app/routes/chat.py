@@ -47,9 +47,16 @@ def _build_event(data: dict) -> dict:
 @router.post("/chat")
 def chat_endpoint(request: ChatRequest):
     try:
+        history = []
+        for item in request.history:
+            if hasattr(item, "model_dump"):
+                history.append(item.model_dump())
+            else:
+                history.append(item.dict())
+
         result = ask_llm(
             message=request.message,
-            history=[item.model_dump() for item in request.history],
+            history=history,
             draft_event=request.draft_event,
         )
 
