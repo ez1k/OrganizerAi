@@ -1,6 +1,6 @@
 import json
 import re
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 from fastapi import APIRouter
 from google.auth.exceptions import RefreshError
@@ -41,7 +41,7 @@ def _merge_event(draft, candidate):
 
 def _merge_search(draft, candidate):
     merged = dict(draft or {})
-    for key in ("title", "date_hint", "time_hint"):
+    for key in ("title", "date_hint", "time_hint", "range_type", "range_days"):
         value = candidate.get(key) if candidate else None
         if value not in (None, ""):
             merged[key] = value
@@ -49,12 +49,26 @@ def _merge_search(draft, candidate):
 
 
 def _extract_search_criteria(message: str, criteria: dict) -> dict:
-    """Deterministically recover common Polish day/time/title phrases for SEARCH/DELETE."""
     text = " ".join(str(message).strip().lower().split())
     result = dict(criteria or {})
 
+    range_patterns = [
+        (r"\bnajbliższe\s+(?:dwa|2)\s+tygodnie\b", "next_days", 14),
+        (r"\bnajbliższych\s+(?:dwa|2)\s+tygodni\b", "next_days", 14),
+        (r"\bnajbliższe\s+2\s+tygodnie\b", "next_days", 14),
+        (r"\bnajbliższe\s+(?:wydarzenia|dni)\b", "next_days", 14),
+    ]
+    for pattern, range_type, days in range_patterns:
+        if re.search(pattern, text, re.IGNORECASE):
+            result["range_type"] = range_type
+            result["range_days"] = days
+            break
+
+    if re.search(r"\b(?:w|na)\s+tym\s+tygodniu\b", text):
+        result["range_type"] = "this_week"
+
     day_patterns = [
-        r"\b(?:w|z)\s+(poniedziałek|poniedzialek|wtorek|środę|srodę|srode|czwartek|piątek|piatek|sobotę|sobote|niedzielę|niedziele)\b",
+        r"\b(?:w|z|na)\s+(poniedziałek|poniedzialek|wtorek|środę|srodę|srode|czwartek|piątek|piatek|sobotę|sobote|niedzielę|niedziele)\b",
         r"\b(poniedziałek|poniedzialek|wtorek|środa|sroda|czwartek|piątek|piatek|sobota|niedziela)\b",
         r"\b(dzisiaj|dziś|jutro|pojutrze)\b",
     ]
@@ -64,6 +78,7 @@ def _extract_search_criteria(message: str, criteria: dict) -> dict:
             day = match.group(1)
             day = {"środę": "środa", "srodę": "środa", "srode": "środa", "sobotę": "sobota", "sobote": "sobota", "niedzielę": "niedziela", "niedziele": "niedziela"}.get(day, day)
             result["date_hint"] = day
+            result.pop("range_type", None) if result.get("range_type") == "next_days" else None
             break
 
     time_match = re.search(r"\b(?:o\s*)?(\d{1,2})(?::(\d{2}))?\s*(?:godz(?:ina|iny|in)?|h)?\b", text)
@@ -125,9 +140,36 @@ def _normalize_search_criteria(criteria):
     return normalized
 
 
+def _week_range(now):
+    start = now - timedelta(days=now.weekday())
+    start = start.replace(hour=0, minute=0, second=0, microsecond=0)
+    return start, start + timedelta(days=7)
+
+
+def _search_range(criteria):
+    now = datetime.now()
+    range_type = criteria.get("range_type")
+    if range_type == "next_days":
+        return now, now + timedelta(days=int(criteria.get("range_days") or 14))
+    if range_type == "this_week":
+        return _week_range(now)
+    return None
+
+
 def _search_calendar(criteria):
     criteria = _normalize_search_criteria(criteria)
     title, date_hint, time_hint = criteria["title"], criteria["date_hint"], criteria["time_hint"]
+
+    range_window = _search_range(criteria)
+    if range_window:
+        start, end = range_window
+        if time_hint:
+            # A time filter inside a range is handled by fetching the range first.
+            events = search_events(title=title, start=start, end=end, max_results=100)
+            target_minutes = int(time_hint[:2]) * 60 + int(time_hint[3:])
+            return [e for e in events if e.get("start") and abs((int(e["start"][11:13]) * 60 + int(e["start"][14:16])) - target_minutes) <= 2]
+        return search_events(title=title, start=start, end=end, max_results=100)
+
     if not date_hint:
         return search_events(title=title, max_results=20)
     day_start, day_end = _day_range(date_hint)
