@@ -2,6 +2,7 @@ import json
 import re
 
 from fastapi import APIRouter
+from google.auth.exceptions import RefreshError
 
 from app.schemas import ChatRequest
 from app.services.date_parser import build_event_time
@@ -20,41 +21,13 @@ def _is_confirmation(message: str) -> bool:
     normalized = " ".join(message.strip().lower().split())
     if CONFIRMATION_RE.fullmatch(normalized):
         return True
-    # Accept natural Polish typos such as: "tak potwierdzma".
     return normalized.startswith("tak") and bool(
         re.search(r"\bpotwierdz[a-ząćęłńóśźż]*\b", normalized)
     )
 
 
-def _build_event(data: dict) -> dict:
-    title = str(data.get("title", "")).strip()
-    date_hint = str(data.get("date_hint", "")).strip()
-    description = str(data.get("description", "")).strip()
-    duration = data.get("duration_minutes", 60)
-
-    if not title or not date_hint:
-        raise ValueError("Event is missing title or date/time")
-
-    try:
-        duration = int(duration or 60)
-    except (TypeError, ValueError):
-        duration = 60
-
-    if duration <= 0:
-        duration = 60
-
-    start, end = build_event_time(date_hint, duration)
-
-    return {
-        "title": title,
-        "description": description,
-        "start": start.isoformat(),
-        "end": end.isoformat(),
-    }
-
-
 def _merge_event(draft: dict | None, candidate: dict | None) -> dict | None:
-    """Merge only fields returned by the LLM into the existing conversation state."""
+    """Merge only explicit values returned by the LLM into the conversation draft."""
     if not draft and not candidate:
         return None
 
@@ -63,7 +36,6 @@ def _merge_event(draft: dict | None, candidate: dict | None) -> dict | None:
         value = candidate.get(key) if candidate else None
         if value not in (None, ""):
             merged[key] = value
-
     return merged
 
 
@@ -76,9 +48,47 @@ def _missing_fields(event: dict | None) -> list[str]:
         missing.append("title")
     if not str(event.get("date_hint", "")).strip():
         missing.append("date_hint")
-    # Duration is optional from the user's perspective; the calendar builder
-    # defaults it to 60 minutes.
     return missing
+
+
+def _build_event(data: dict) -> dict:
+    title = str(data.get("title", "")).strip()
+    date_hint = str(data.get("date_hint", "")).strip()
+    description = str(data.get("description", "")).strip()
+    duration = data.get("duration_minutes", 60)
+
+    if not title or not date_hint:
+        raise ValueError("Brakuje nazwy, dnia lub godziny wydarzenia.")
+
+    try:
+        duration = int(duration or 60)
+    except (TypeError, ValueError):
+        duration = 60
+
+    if duration <= 0:
+        duration = 60
+
+    start, end = build_event_time(date_hint, duration)
+    return {
+        "title": title,
+        "description": description,
+        "start": start.isoformat(),
+        "end": end.isoformat(),
+    }
+
+
+def _create_calendar_event(event: dict):
+    try:
+        return create_event(event)
+    except (FileNotFoundError, RefreshError) as exc:
+        # Calendar authentication is deliberately kept separate from the
+        # conversation state. The frontend can ask the user to re-authenticate
+        # without losing the already confirmed event draft.
+        raise CalendarAuthRequired(str(exc)) from exc
+
+
+class CalendarAuthRequired(Exception):
+    pass
 
 
 @router.post("/chat")
@@ -95,7 +105,7 @@ def chat_endpoint(request: ChatRequest):
                 }
 
             event = _build_event(request.draft_event)
-            link = create_event(event)
+            link = _create_calendar_event(event)
             return {
                 "status": "confirmed",
                 "message": f"Dodane: {event['title']}.",
@@ -123,8 +133,6 @@ def chat_endpoint(request: ChatRequest):
         if status == "cancelled":
             return {"status": "cancelled", "message": reply, "event": None}
 
-        # Backend decides whether the collected state is complete. The LLM can
-        # suggest a state, but it cannot skip this validation.
         missing = _missing_fields(event_data)
         if not missing and status in {"ready_for_confirmation", "chat"}:
             return {
@@ -139,13 +147,28 @@ def chat_endpoint(request: ChatRequest):
             "event": event_data,
         }
 
+    except CalendarAuthRequired as exc:
+        return {
+            "status": "calendar_auth_required",
+            "message": "Google Calendar wymaga ponownej autoryzacji. Twoje wydarzenie nie zostało utracone.",
+            "error": str(exc),
+            "event": request.draft_event,
+        }
     except json.JSONDecodeError:
         return {
             "status": "error",
             "message": "Model zwrócił niepoprawną odpowiedź JSON.",
+            "event": request.draft_event,
         }
-    except Exception as e:
+    except ValueError as exc:
+        return {
+            "status": "needs_input",
+            "message": str(exc),
+            "event": request.draft_event,
+        }
+    except Exception as exc:
         return {
             "status": "error",
-            "message": str(e),
+            "message": str(exc),
+            "event": request.draft_event,
         }
