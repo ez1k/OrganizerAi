@@ -25,6 +25,11 @@ def _is_confirmation(message: str) -> bool:
     return normalized.startswith("tak") and "potwierdz" in normalized
 
 
+def _is_number_selection(message: str) -> int | None:
+    match = re.fullmatch(r"\s*(\d+)\s*[.]?\s*", message)
+    return int(match.group(1)) if match else None
+
+
 def _merge_event(draft, candidate):
     if not draft and not candidate:
         return None
@@ -48,7 +53,11 @@ def _merge_search(draft, candidate):
 def _missing_event(event):
     if not event:
         return ["title", "date_hint", "time_hint"]
-    return [key for key in ("title", "date_hint", "time_hint") if not str(event.get(key, "")).strip()]
+    return [
+        key
+        for key in ("title", "date_hint", "time_hint")
+        if not str(event.get(key, "")).strip()
+    ]
 
 
 def _build_event(data):
@@ -84,9 +93,14 @@ def _search_calendar(criteria):
             target, _ = build_event_time(f"{date_hint} o {time_hint}", 1)
             day_start = target - timedelta(minutes=1)
             day_end = target + timedelta(minutes=1)
-        return search_events(title=title, start=day_start, end=day_end, max_results=20)
+        return search_events(
+            query=title,
+            time_min=day_start,
+            time_max=day_end,
+            max_results=20,
+        )
 
-    return search_events(title=title, max_results=20)
+    return search_events(query=title, max_results=20)
 
 
 def _format_events(events):
@@ -111,10 +125,37 @@ def _calendar_call(fn, *args, **kwargs):
         raise CalendarAuthRequired(str(exc)) from exc
 
 
+def _last_matches(state):
+    matches = state.get("matches") if isinstance(state, dict) else None
+    return matches if isinstance(matches, list) else []
+
+
 @router.post("/chat")
 def chat_endpoint(request: ChatRequest):
     try:
         state = request.draft_event or {}
+        selection = _is_number_selection(request.message)
+
+        # A numeric answer selects an item from the previous calendar search.
+        if selection is not None and _last_matches(state):
+            matches = _last_matches(state)
+            if 1 <= selection <= len(matches):
+                selected = matches[selection - 1]
+                if state.get("operation") == "delete":
+                    return {
+                        "status": "calendar_delete_confirmation",
+                        "message": f"Wybrano „{selected['title']}”. Czy chcesz je usunąć?",
+                        "event": {
+                            **state,
+                            "matches": [selected],
+                            "selected_event_id": selected.get("id"),
+                        },
+                    }
+                return {
+                    "status": "calendar_search",
+                    "message": _format_events([selected]),
+                    "event": state,
+                }
 
         # Confirm a pending DELETE without asking the LLM again.
         if state.get("operation") == "delete" and state.get("matches") and _is_confirmation(request.message):
@@ -136,52 +177,113 @@ def chat_endpoint(request: ChatRequest):
         if state.get("operation") == "create" and _is_confirmation(request.message):
             missing = _missing_event(state)
             if missing:
-                return {"status": "needs_input", "message": "Brakuje jeszcze danych wydarzenia.", "event": state}
+                return {
+                    "status": "needs_input",
+                    "message": "Brakuje jeszcze danych wydarzenia.",
+                    "event": state,
+                }
             event = _build_event(state)
             link = _calendar_call(create_event, event)
-            return {"status": "confirmed", "message": f"Dodane: {event['title']}.", "event": event, "calendar_link": link}
+            return {
+                "status": "confirmed",
+                "message": f"Dodane: {event['title']}.",
+                "event": event,
+                "calendar_link": link,
+            }
 
-        history = [item.model_dump() if hasattr(item, "model_dump") else item.dict() for item in request.history]
-        result = ask_llm(message=request.message, history=history, draft_event=request.draft_event)
+        history = [
+            item.model_dump() if hasattr(item, "model_dump") else item.dict()
+            for item in request.history
+        ]
+        result = ask_llm(
+            message=request.message,
+            history=history,
+            draft_event=request.draft_event,
+        )
         operation = result.get("operation", "chat")
         status = result.get("status", "chat")
         reply = result.get("reply", "")
 
+        # External questions are intentionally not sent to the calendar. The
+        # current app has no external web-search provider, so never fabricate
+        # an answer such as a movie time.
+        if operation == "external_search":
+            return {
+                "status": "external_search",
+                "message": "To pytanie dotyczy informacji spoza kalendarza. Nie mam jeszcze podłączonego wyszukiwania internetowego, więc nie będę zgadywać odpowiedzi.",
+                "event": None,
+            }
+
         if operation == "search":
-            criteria = _merge_search(state.get("search"), result.get("search"))
+            criteria = _merge_search(
+                state.get("search") if state.get("operation") == "search" else None,
+                result.get("search"),
+            )
             events = _calendar_call(_search_calendar, criteria)
             return {
                 "status": "calendar_search",
                 "message": _format_events(events),
-                "event": {"operation": "search", "search": criteria, "matches": events},
+                "event": {
+                    "operation": "search",
+                    "search": criteria,
+                    "matches": events,
+                },
             }
 
         if operation == "delete":
-            criteria = _merge_search(state.get("search"), result.get("search"))
-            events = _calendar_call(_search_calendar, criteria)
+            # Pronouns such as "ten drugi", "poprzedni" and "go" should use
+            # the previous search result instead of creating a new event.
+            previous_matches = _last_matches(state)
+            criteria = _merge_search(
+                state.get("search") if state.get("operation") in {"search", "delete"} else None,
+                result.get("search"),
+            )
+            if previous_matches and not any(criteria.values()):
+                events = previous_matches
+            else:
+                events = _calendar_call(_search_calendar, criteria)
+
             if not events:
-                return {"status": "chat", "message": "Nie znalazłem pasującego wydarzenia do usunięcia.", "event": None}
+                return {
+                    "status": "chat",
+                    "message": "Nie znalazłem pasującego wydarzenia do usunięcia.",
+                    "event": None,
+                }
             if len(events) > 1:
-                numbered = _format_events(events)
                 return {
                     "status": "calendar_delete_confirmation",
-                    "message": numbered + "\nKtóre wydarzenie mam usunąć? Podaj numer.",
-                    "event": {"operation": "delete", "search": criteria, "matches": events},
+                    "message": _format_events(events) + "\nKtóre wydarzenie mam usunąć? Podaj numer.",
+                    "event": {
+                        "operation": "delete",
+                        "search": criteria,
+                        "matches": events,
+                    },
                 }
             event = events[0]
             return {
                 "status": "calendar_delete_confirmation",
                 "message": f"Znalazłem „{event['title']}” o {event.get('start', '?')}. Czy chcesz je usunąć?",
-                "event": {"operation": "delete", "search": criteria, "matches": [event]},
+                "event": {
+                    "operation": "delete",
+                    "search": criteria,
+                    "matches": [event],
+                },
             }
 
-        event_data = _merge_event(request.draft_event if state.get("operation", "create") == "create" else None, result.get("event"))
+        event_data = _merge_event(
+            request.draft_event if state.get("operation", "create") == "create" else None,
+            result.get("event"),
+        )
         if operation == "create":
             event_data = event_data or {"operation": "create"}
             event_data["operation"] = "create"
             missing = _missing_event(event_data)
             if not missing:
-                return {"status": "ready_for_confirmation", "message": reply, "event": event_data}
+                return {
+                    "status": "ready_for_confirmation",
+                    "message": reply,
+                    "event": event_data,
+                }
             return {"status": "needs_input", "message": reply, "event": event_data}
 
         return {"status": status, "message": reply, "event": event_data}
