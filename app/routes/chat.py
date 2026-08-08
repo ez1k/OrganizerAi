@@ -27,12 +27,11 @@ def _is_confirmation(message: str) -> bool:
 
 
 def _merge_event(draft: dict | None, candidate: dict | None) -> dict | None:
-    """Merge only explicit values returned by the LLM into the conversation draft."""
     if not draft and not candidate:
         return None
 
     merged = dict(draft or {})
-    for key in ("title", "date_hint", "duration_minutes", "description"):
+    for key in ("title", "date_hint", "time_hint", "duration_minutes", "description"):
         value = candidate.get(key) if candidate else None
         if value not in (None, ""):
             merged[key] = value
@@ -41,23 +40,26 @@ def _merge_event(draft: dict | None, candidate: dict | None) -> dict | None:
 
 def _missing_fields(event: dict | None) -> list[str]:
     if not event:
-        return ["title", "date_hint"]
+        return ["title", "date_hint", "time_hint"]
 
     missing = []
     if not str(event.get("title", "")).strip():
         missing.append("title")
     if not str(event.get("date_hint", "")).strip():
         missing.append("date_hint")
+    if not str(event.get("time_hint", "")).strip():
+        missing.append("time_hint")
     return missing
 
 
 def _build_event(data: dict) -> dict:
     title = str(data.get("title", "")).strip()
     date_hint = str(data.get("date_hint", "")).strip()
+    time_hint = str(data.get("time_hint", "")).strip()
     description = str(data.get("description", "")).strip()
     duration = data.get("duration_minutes", 60)
 
-    if not title or not date_hint:
+    if not title or not date_hint or not time_hint:
         raise ValueError("Brakuje nazwy, dnia lub godziny wydarzenia.")
 
     try:
@@ -68,7 +70,9 @@ def _build_event(data: dict) -> dict:
     if duration <= 0:
         duration = 60
 
-    start, end = build_event_time(date_hint, duration)
+    # Keep date and time separate in the conversation state, but combine them
+    # only at the final parsing step.
+    start, end = build_event_time(f"{date_hint} o {time_hint}", duration)
     return {
         "title": title,
         "description": description,
@@ -81,9 +85,6 @@ def _create_calendar_event(event: dict):
     try:
         return create_event(event)
     except (FileNotFoundError, RefreshError) as exc:
-        # Calendar authentication is deliberately kept separate from the
-        # conversation state. The frontend can ask the user to re-authenticate
-        # without losing the already confirmed event draft.
         raise CalendarAuthRequired(str(exc)) from exc
 
 
@@ -94,7 +95,6 @@ class CalendarAuthRequired(Exception):
 @router.post("/chat")
 def chat_endpoint(request: ChatRequest):
     try:
-        # Confirmation is an application state transition, not an LLM decision.
         if request.draft_event and _is_confirmation(request.message):
             missing = _missing_fields(request.draft_event)
             if missing:
