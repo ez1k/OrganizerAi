@@ -149,7 +149,17 @@ def chat_endpoint(request: ChatRequest):
             if missing:
                 return {"status": "needs_input", "message": "Brakuje jeszcze danych wydarzenia.", "event": state}
             event = _build_event(state)
-            link = _calendar_call(create_event, event)
+            allow_duplicate = bool(state.get("allow_duplicate"))
+            result = _calendar_call(create_event, event, allow_duplicate=allow_duplicate)
+            duplicate = result.get("duplicate") if isinstance(result, dict) else None
+            if duplicate and not allow_duplicate:
+                duplicate_state = {**state, "allow_duplicate": True, "duplicate_event": duplicate}
+                return {
+                    "status": "calendar_duplicate_confirmation",
+                    "message": f"Takie wydarzenie już istnieje: „{duplicate['title']}” o {duplicate.get('start', '?')}. Czy chcesz mimo to dodać kolejne?",
+                    "event": duplicate_state,
+                }
+            link = result.get("calendar_link") if isinstance(result, dict) else result
             return {"status": "confirmed", "message": f"Dodane: {event['title']}.", "event": event, "calendar_link": link}
 
         history = [item.model_dump() if hasattr(item, "model_dump") else item.dict() for item in request.history]
