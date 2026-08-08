@@ -62,7 +62,16 @@ def get_calendar_service():
     return build("calendar", "v3", credentials=creds)
 
 
-def create_event(event: dict):
+def _event_datetime(value: str | None):
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def create_event(event: dict, allow_duplicate: bool = False):
     service = get_calendar_service()
 
     gcal_event = {
@@ -78,12 +87,16 @@ def create_event(event: dict):
         },
     }
 
+    if not allow_duplicate:
+        duplicates = find_duplicate_events(event)
+        if duplicates:
+            return {"duplicate": duplicates[0]}
+
     created_event = service.events().insert(
-        calendarId="primary",
-        body=gcal_event,
+        calendarId="primary", body=gcal_event
     ).execute()
 
-    return created_event.get("htmlLink")
+    return {"calendar_link": created_event.get("htmlLink")}
 
 
 def search_events(
@@ -128,6 +141,33 @@ def search_events(
         })
 
     return events
+
+
+def find_duplicate_events(event: dict) -> list[dict]:
+    """Find events with the same title and exact start/end time."""
+    start = _event_datetime(event.get("start"))
+    end = _event_datetime(event.get("end"))
+    if not start or not end:
+        return []
+
+    candidates = search_events(
+        title=event.get("title"),
+        start=start - timedelta(minutes=1),
+        end=end + timedelta(minutes=1),
+        max_results=20,
+    )
+
+    duplicates = []
+    for candidate in candidates:
+        candidate_start = _event_datetime(candidate.get("start"))
+        candidate_end = _event_datetime(candidate.get("end"))
+        if (
+            candidate.get("title", "").strip().casefold() == event.get("title", "").strip().casefold()
+            and candidate_start == start
+            and candidate_end == end
+        ):
+            duplicates.append(candidate)
+    return duplicates
 
 
 def delete_event(event_id: str):
