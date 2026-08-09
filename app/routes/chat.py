@@ -15,13 +15,17 @@ from app.services.llm_service import ask_llm
 router = APIRouter()
 WARSAW = ZoneInfo("Europe/Warsaw")
 CONFIRMATION_RE = re.compile(r"^(?:tak|potwierdzam|potwierdź|dodaj|zapisz|jasne|zgadza się|zgadza sie|ok|okej|okay|yes)[.!\s]*$", re.I)
+THANKS_RE = re.compile(r"^(?:dzięki|dzieki|dziękuję|dziekuje|super|super dzięki|super dzieki|ok dzięki|ok dzieki)[.!\s]*$", re.I)
 ALL_DELETE_RE = re.compile(r"^\s*(?:usuń|usun|skasuj|wywal)\s+(?:je|oba|obie|wszystkie|wszystko|wszystkie te)\s*[.!]?\s*$", re.I)
-DAY_NAMES = {"poniedziałek","poniedzialek","wtorek","środa","sroda","czwartek","piątek","piatek","sobota","niedziela"}
 
 
 def _is_confirmation(message):
     normalized = " ".join(message.strip().lower().split())
     return bool(CONFIRMATION_RE.fullmatch(normalized) or (normalized.startswith("tak") and "potwierdz" in normalized))
+
+
+def _is_thanks(message):
+    return bool(THANKS_RE.fullmatch(" ".join(message.strip().lower().split())))
 
 
 def _is_number_selection(message):
@@ -30,6 +34,18 @@ def _is_number_selection(message):
 
 
 def _is_delete_all(message): return bool(ALL_DELETE_RE.fullmatch(message))
+
+
+def _is_calendar_search_intent(message):
+    text = " ".join(str(message).strip().lower().split())
+    patterns = (
+        r"\bsprawdź\b", r"\bsprawdz\b", r"\bco\s+mam\b", r"\bjakie\s+mam\b",
+        r"\bpokaż\b", r"\bpokaz\b", r"\bnajbliższe\s+wydarzenia\b",
+        r"\bnajbliższych\s+(?:dwa|2)\s+tygodni", r"\bnajbliższe\s+(?:dwa|2)\s+tygodnie\b",
+        r"\b(?:w|na)\s+tym\s+tygodniu\b", r"\b(?:na|w)\s+ten\s+tydzień\b",
+        r"\bna\s+ten\s+tydzień\s+i\s+(?:następny|nastepny)\b",
+    )
+    return any(re.search(pattern, text) for pattern in patterns)
 
 
 def _merge_event(draft, candidate):
@@ -51,9 +67,9 @@ def _merge_search(draft, candidate):
 def _extract_search_criteria(message, criteria):
     text = " ".join(str(message).strip().lower().split())
     result = dict(criteria or {})
-    if re.search(r"\bnajbliższe\s+(?:dwa|2)\s+tygodnie\b|\bnajbliższych\s+(?:dwa|2)\s+tygodni\b", text):
+    if re.search(r"\bnajbliższe\s+(?:dwa|2)\s+tygodnie\b|\bnajbliższych\s+(?:dwa|2)\s+tygodni(?:e|ach)?\b|\b(?:na|w)\s+ten\s+tydzień\s+i\s+(?:następny|nastepny)\b", text):
         result["range_type"], result["range_days"] = "next_days", 14
-    elif re.search(r"\bnajbliższe\s+(?:wydarzenia|dni)\b", text):
+    elif re.search(r"\bnajbliższe\s+(?:wydarzenia|dni)\b|\bnajbliższych\s+wydarze(?:ń|nia)\b", text):
         result["range_type"], result["range_days"] = "next_days", 14
     elif re.search(r"\b(?:w|na)\s+tym\s+tygodniu\b", text):
         result["range_type"] = "this_week"
@@ -155,7 +171,6 @@ def _search_calendar(criteria):
             return filtered
         return events
     if not date_hint:
-        # A generic "what are my upcoming events?" means the next 14 days.
         start, end = _search_range({"range_type":"next_days","range_days":14})
         return search_events(title=title, start=start, end=end, max_results=100)
     day_start, day_end = _day_range(date_hint)
@@ -217,14 +232,26 @@ def chat_endpoint(request: ChatRequest):
             _save_learning(request,{"operation":"create","event":state})
             return {"status":"confirmed","message":f"Dodane: {event['title']}.","event":event,"calendar_link":result.get("calendar_link") if isinstance(result,dict) else result}
 
+        if state.get("operation") == "create" and _is_thanks(request.message):
+            return {"status":"chat","message":"Nie ma za co!","event":None}
+
+        if _is_calendar_search_intent(request.message):
+            previous_search = state.get("search") if state.get("operation") in {"search", "delete"} else None
+            criteria = _normalize_search_criteria(_extract_search_criteria(request.message, previous_search))
+            events = _calendar_call(_search_calendar, criteria)
+            _save_learning(request,{"operation":"search","search":criteria})
+            return {"status":"calendar_search","message":_format_events(events),"event":{"operation":"search","search":criteria,"matches":events}}
+
         history=[item.model_dump() if hasattr(item,"model_dump") else item.dict() for item in request.history]
         result=ask_llm(message=request.message,history=history,draft_event=request.draft_event,user_id=request.user_id)
         operation,status,reply=result.get("operation","chat"),result.get("status","chat"),result.get("reply","")
         if operation=="external_search": return {"status":"external_search","message":"To pytanie dotyczy informacji spoza kalendarza. Nie mam jeszcze podłączonego wyszukiwania internetowego, więc nie będę zgadywać odpowiedzi.","event":None}
         if operation=="search":
-            criteria=_normalize_search_criteria(_extract_search_criteria(request.message,_merge_search(state.get("search") if state.get("operation")=="search" else None,result.get("search")))); events=_calendar_call(_search_calendar,criteria); _save_learning(request,{"operation":"search","search":criteria}); return {"status":"calendar_search","message":_format_events(events),"event":{"operation":"search","search":criteria,"matches":events}}
+            previous_search = state.get("search") if state.get("operation") in {"search", "delete"} else None
+            criteria=_normalize_search_criteria(_extract_search_criteria(request.message,_merge_search(previous_search,result.get("search")))); events=_calendar_call(_search_calendar,criteria); _save_learning(request,{"operation":"search","search":criteria}); return {"status":"calendar_search","message":_format_events(events),"event":{"operation":"search","search":criteria,"matches":events}}
         if operation=="delete":
-            previous_matches=_last_matches(state); criteria=_normalize_search_criteria(_extract_search_criteria(request.message,_merge_search(state.get("search") if state.get("operation") in {"search","delete"} else None,result.get("search")))); events=previous_matches if previous_matches and not any(criteria.values()) else _calendar_call(_search_calendar,criteria)
+            previous_matches=_last_matches(state); previous_search = state.get("search") if state.get("operation") in {"search","delete"} else None
+            criteria=_normalize_search_criteria(_extract_search_criteria(request.message,_merge_search(previous_search,result.get("search")))); events=previous_matches if previous_matches and not any(criteria.values()) else _calendar_call(_search_calendar,criteria)
             if not events: return {"status":"chat","message":"Nie znalazłem pasującego wydarzenia do usunięcia.","event":None}
             if len(events)>1: return {"status":"calendar_delete_confirmation","message":_format_events(events)+"\nKtóre wydarzenie mam usunąć? Podaj numer albo napisz „usuń oba/wszystkie”.","event":{"operation":"delete","search":criteria,"matches":events}}
             event=events[0]; return {"status":"calendar_delete_confirmation","message":f"Znalazłem „{event['title']}” o {event.get('start','?')}. Czy chcesz je usunąć?","event":{"operation":"delete","search":criteria,"matches":[event]}}
