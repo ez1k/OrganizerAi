@@ -35,10 +35,8 @@ def get_calendar_service():
             with open(TOKEN_FILE, "rb") as token:
                 creds = pickle.load(token)
         except (EOFError, pickle.PickleError, AttributeError, ValueError, TypeError):
-            try:
-                os.remove(TOKEN_FILE)
-            except OSError:
-                pass
+            try: os.remove(TOKEN_FILE)
+            except OSError: pass
     if creds and creds.valid:
         return build("calendar", "v3", credentials=creds)
     if creds and creds.expired and creds.refresh_token:
@@ -47,28 +45,21 @@ def get_calendar_service():
             _save_credentials(creds)
             return build("calendar", "v3", credentials=creds)
         except RefreshError:
-            try:
-                os.remove(TOKEN_FILE)
-            except OSError:
-                pass
+            try: os.remove(TOKEN_FILE)
+            except OSError: pass
     return build("calendar", "v3", credentials=_run_oauth_flow())
 
 
 def _event_datetime(value: str | None):
-    if not value:
-        return None
+    if not value: return None
     try:
         parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-        if parsed.tzinfo is None:
-            parsed = parsed.replace(tzinfo=CALENDAR_TZ)
-        return parsed
-    except ValueError:
-        return None
+        return parsed if parsed.tzinfo else parsed.replace(tzinfo=CALENDAR_TZ)
+    except ValueError: return None
 
 
 def _calendar_datetime(value: datetime) -> str:
-    if value.tzinfo is None:
-        value = value.replace(tzinfo=CALENDAR_TZ)
+    if value.tzinfo is None: value = value.replace(tzinfo=CALENDAR_TZ)
     return value.astimezone(CALENDAR_TZ).isoformat()
 
 
@@ -82,57 +73,56 @@ def create_event(event: dict, allow_duplicate: bool = False):
     }
     if not allow_duplicate:
         duplicates = find_duplicate_events(event)
-        if duplicates:
-            return {"duplicate": duplicates[0]}
+        if duplicates: return {"duplicate": duplicates[0]}
     created_event = service.events().insert(calendarId="primary", body=gcal_event).execute()
     return {"calendar_link": created_event.get("htmlLink")}
 
 
-def search_events(title: str | None = None, start: datetime | None = None, end: datetime | None = None, max_results: int = 10) -> list[dict]:
-    """Find events using explicit Europe/Warsaw timezone-aware boundaries."""
+def search_events(title: str | None = None, start: datetime | None = None, end: datetime | None = None, max_results: int = 100) -> list[dict]:
+    """Find events in the primary calendar, following Google's pagination."""
     service = get_calendar_service()
-    now = datetime.now(CALENDAR_TZ)
-    if start is None:
-        start = now
-    if end is None:
-        end = start + timedelta(days=30)
+    start = start or datetime.now(CALENDAR_TZ)
+    end = end or (start + timedelta(days=30))
+    if start.tzinfo is None: start = start.replace(tzinfo=CALENDAR_TZ)
+    if end.tzinfo is None: end = end.replace(tzinfo=CALENDAR_TZ)
 
-    params = {
+    base_params = {
         "calendarId": "primary",
         "timeMin": _calendar_datetime(start),
         "timeMax": _calendar_datetime(end),
         "singleEvents": True,
         "orderBy": "startTime",
-        "maxResults": max_results,
+        "maxResults": min(max_results, 2500),
     }
-    if title:
-        params["q"] = title.strip()
+    if title: base_params["q"] = title.strip()
 
-    response = service.events().list(**params).execute()
     events = []
-    for item in response.get("items", []):
-        start_data = item.get("start", {})
-        end_data = item.get("end", {})
-        events.append({
-            "id": item.get("id"),
-            "title": item.get("summary", ""),
-            "description": item.get("description", ""),
-            "start": start_data.get("dateTime") or start_data.get("date"),
-            "end": end_data.get("dateTime") or end_data.get("date"),
-            "calendar_link": item.get("htmlLink"),
-        })
-    return events
+    page_token = None
+    while True:
+        params = dict(base_params)
+        if page_token: params["pageToken"] = page_token
+        response = service.events().list(**params).execute()
+        for item in response.get("items", []):
+            start_data, end_data = item.get("start", {}), item.get("end", {})
+            events.append({
+                "id": item.get("id"),
+                "title": item.get("summary", ""),
+                "description": item.get("description", ""),
+                "start": start_data.get("dateTime") or start_data.get("date"),
+                "end": end_data.get("dateTime") or end_data.get("date"),
+                "calendar_link": item.get("htmlLink"),
+            })
+        page_token = response.get("nextPageToken")
+        if not page_token or len(events) >= max_results: break
+    return events[:max_results]
 
 
 def find_duplicate_events(event: dict) -> list[dict]:
-    start = _event_datetime(event.get("start"))
-    end = _event_datetime(event.get("end"))
-    if not start or not end:
-        return []
-    candidates = search_events(title=event.get("title"), start=start - timedelta(minutes=1), end=end + timedelta(minutes=1), max_results=20)
-    return [candidate for candidate in candidates if candidate.get("title", "").strip().casefold() == event.get("title", "").strip().casefold() and _event_datetime(candidate.get("start")) == start and _event_datetime(candidate.get("end")) == end]
+    start, end = _event_datetime(event.get("start")), _event_datetime(event.get("end"))
+    if not start or not end: return []
+    candidates = search_events(title=event.get("title"), start=start-timedelta(minutes=1), end=end+timedelta(minutes=1), max_results=20)
+    return [e for e in candidates if e.get("title", "").strip().casefold() == event.get("title", "").strip().casefold() and _event_datetime(e.get("start")) == start and _event_datetime(e.get("end")) == end]
 
 
 def delete_event(event_id: str):
-    service = get_calendar_service()
-    service.events().delete(calendarId="primary", eventId=event_id).execute()
+    get_calendar_service().events().delete(calendarId="primary", eventId=event_id).execute()
