@@ -1,7 +1,7 @@
 import json
 import requests
 
-from app.services.database import find_learning_examples, format_learning_examples
+from app.services.database import find_learning_examples, format_learning_examples, save_learning_example
 
 OLLAMA_URL = "http://localhost:11434/api/chat"
 MODEL = "mistral"
@@ -90,4 +90,14 @@ def ask_llm(message: str, history: list[dict], draft_event: dict | None = None, 
     parsed = json.loads(result)
     if not isinstance(parsed, dict) or "reply" not in parsed or "status" not in parsed:
         raise ValueError("Invalid structured response from Ollama")
+
+    # Store the model's structured interpretation. corrected=False means it is
+    # an observation, not a guarantee that the user accepted it as correct.
+    if parsed.get("operation") in {"create", "search", "delete"}:
+        try:
+            save_learning_example(user_id, message, parsed, corrected=False)
+        except Exception:
+            # Database availability must never break the chat.
+            pass
+
     return parsed
