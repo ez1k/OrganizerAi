@@ -232,16 +232,13 @@ def chat_endpoint(request: ChatRequest):
             _save_learning(request,{"operation":"create","event":state})
             return {"status":"confirmed","message":f"Dodane: {event['title']}.","event":event,"calendar_link":result.get("calendar_link") if isinstance(result,dict) else result}
 
-        # Do not let the model continue an old CREATE draft when the user is only acknowledging it.
         if state.get("operation") == "create" and _is_thanks(request.message):
             return {"status":"chat","message":"Nie ma za co!","event":None}
 
-        # Calendar lookup phrases are deterministic: the LLM should not be able to turn a search
-        # into CREATE or ask for a missing day when the backend can derive the range itself.
         if _is_calendar_search_intent(request.message):
-            history=[]
-            criteria=_normalize_search_criteria(_extract_search_criteria(request.message, None))
-            events=_calendar_call(_search_calendar,criteria)
+            previous_search = state.get("search") if state.get("operation") in {"search", "delete"} else None
+            criteria = _normalize_search_criteria(_extract_search_criteria(request.message, previous_search))
+            events = _calendar_call(_search_calendar, criteria)
             _save_learning(request,{"operation":"search","search":criteria})
             return {"status":"calendar_search","message":_format_events(events),"event":{"operation":"search","search":criteria,"matches":events}}
 
@@ -250,9 +247,11 @@ def chat_endpoint(request: ChatRequest):
         operation,status,reply=result.get("operation","chat"),result.get("status","chat"),result.get("reply","")
         if operation=="external_search": return {"status":"external_search","message":"To pytanie dotyczy informacji spoza kalendarza. Nie mam jeszcze podłączonego wyszukiwania internetowego, więc nie będę zgadywać odpowiedzi.","event":None}
         if operation=="search":
-            criteria=_normalize_search_criteria(_extract_search_criteria(request.message,_merge_search(state.get("search") if state.get("operation")=="search" else None,result.get("search")))); events=_calendar_call(_search_calendar,criteria); _save_learning(request,{"operation":"search","search":criteria}); return {"status":"calendar_search","message":_format_events(events),"event":{"operation":"search","search":criteria,"matches":events}}
+            previous_search = state.get("search") if state.get("operation") in {"search", "delete"} else None
+            criteria=_normalize_search_criteria(_extract_search_criteria(request.message,_merge_search(previous_search,result.get("search")))); events=_calendar_call(_search_calendar,criteria); _save_learning(request,{"operation":"search","search":criteria}); return {"status":"calendar_search","message":_format_events(events),"event":{"operation":"search","search":criteria,"matches":events}}
         if operation=="delete":
-            previous_matches=_last_matches(state); criteria=_normalize_search_criteria(_extract_search_criteria(request.message,_merge_search(state.get("search") if state.get("operation") in {"search","delete"} else None,result.get("search")))); events=previous_matches if previous_matches and not any(criteria.values()) else _calendar_call(_search_calendar,criteria)
+            previous_matches=_last_matches(state); previous_search = state.get("search") if state.get("operation") in {"search","delete"} else None
+            criteria=_normalize_search_criteria(_extract_search_criteria(request.message,_merge_search(previous_search,result.get("search")))); events=previous_matches if previous_matches and not any(criteria.values()) else _calendar_call(_search_calendar,criteria)
             if not events: return {"status":"chat","message":"Nie znalazłem pasującego wydarzenia do usunięcia.","event":None}
             if len(events)>1: return {"status":"calendar_delete_confirmation","message":_format_events(events)+"\nKtóre wydarzenie mam usunąć? Podaj numer albo napisz „usuń oba/wszystkie”.","event":{"operation":"delete","search":criteria,"matches":events}}
             event=events[0]; return {"status":"calendar_delete_confirmation","message":f"Znalazłem „{event['title']}” o {event.get('start','?')}. Czy chcesz je usunąć?","event":{"operation":"delete","search":criteria,"matches":[event]}}
