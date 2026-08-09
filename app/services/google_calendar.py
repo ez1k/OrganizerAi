@@ -5,6 +5,7 @@ from googleapiclient.discovery import build
 from google_auth_oauthlib.flow import InstalledAppFlow
 from google.auth.transport.requests import Request
 from google.auth.exceptions import RefreshError
+import logging
 import os
 import pickle
 
@@ -12,6 +13,7 @@ SCOPES = ["https://www.googleapis.com/auth/calendar"]
 TOKEN_FILE = "token.pickle"
 CREDENTIALS_FILE = "credentials.json"
 CALENDAR_TZ = ZoneInfo("Europe/Warsaw")
+logger = logging.getLogger(__name__)
 
 
 def _save_credentials(creds):
@@ -79,7 +81,7 @@ def create_event(event: dict, allow_duplicate: bool = False):
 
 
 def search_events(title: str | None = None, start: datetime | None = None, end: datetime | None = None, max_results: int = 100) -> list[dict]:
-    """Find events in the primary calendar, following Google's pagination."""
+    """Find events and log the exact Google Calendar request/response for diagnostics."""
     service = get_calendar_service()
     start = start or datetime.now(CALENDAR_TZ)
     end = end or (start + timedelta(days=30))
@@ -96,24 +98,32 @@ def search_events(title: str | None = None, start: datetime | None = None, end: 
     }
     if title: base_params["q"] = title.strip()
 
+    logger.warning("CALENDAR SEARCH params=%s", base_params)
     events = []
     page_token = None
+    page = 0
     while True:
         params = dict(base_params)
         if page_token: params["pageToken"] = page_token
+        page += 1
         response = service.events().list(**params).execute()
-        for item in response.get("items", []):
+        items = response.get("items", [])
+        logger.warning("CALENDAR SEARCH page=%s items=%s nextPageToken=%s", page, len(items), bool(response.get("nextPageToken")))
+        for item in items:
             start_data, end_data = item.get("start", {}), item.get("end", {})
-            events.append({
+            parsed = {
                 "id": item.get("id"),
                 "title": item.get("summary", ""),
                 "description": item.get("description", ""),
                 "start": start_data.get("dateTime") or start_data.get("date"),
                 "end": end_data.get("dateTime") or end_data.get("date"),
                 "calendar_link": item.get("htmlLink"),
-            })
+            }
+            logger.warning("CALENDAR EVENT id=%s title=%r start=%s end=%s", parsed["id"], parsed["title"], parsed["start"], parsed["end"])
+            events.append(parsed)
         page_token = response.get("nextPageToken")
         if not page_token or len(events) >= max_results: break
+    logger.warning("CALENDAR SEARCH total=%s", len(events))
     return events[:max_results]
 
 
