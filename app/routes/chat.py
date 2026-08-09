@@ -67,12 +67,27 @@ def _merge_search(draft, candidate):
 def _extract_search_criteria(message, criteria):
     text = " ".join(str(message).strip().lower().split())
     result = dict(criteria or {})
-    if re.search(r"\bnajbliższe\s+(?:dwa|2)\s+tygodnie\b|\bnajbliższych\s+(?:dwa|2)\s+tygodni(?:e|ach)?\b|\b(?:na|w)\s+ten\s+tydzień\s+i\s+(?:następny|nastepny)\b", text):
+    multi_week = re.search(
+        r"\bnajbliższe\s+(?:dwa|2)\s+tygodnie\b"
+        r"|\bnajbliższych\s+(?:dwa|2|dwóch)\s+tygodni(?:e|ach)?\b"
+        r"|\bw\s+najbliższych\s+(?:dwa|2|dwóch)\s+tygodni(?:e|ach)?\b"
+        r"|\bnajbliższe\s+14\s+dni\b"
+        r"|\bprzez\s+najbliższe\s+(?:dwa|2|dwóch)\s+tygodnie\b"
+        r"|\b(?:na|w)\s+ten\s+tydzień\s+i\s+(?:następny|nastepny)\b",
+        text,
+    )
+    if multi_week:
         result["range_type"], result["range_days"] = "next_days", 14
+        result.pop("date_hint", None)
+        result.pop("time_hint", None)
     elif re.search(r"\bnajbliższe\s+(?:wydarzenia|dni)\b|\bnajbliższych\s+wydarze(?:ń|nia)\b", text):
         result["range_type"], result["range_days"] = "next_days", 14
+        result.pop("date_hint", None)
+        result.pop("time_hint", None)
     elif re.search(r"\b(?:w|na)\s+tym\s+tygodniu\b", text):
         result["range_type"] = "this_week"
+        result.pop("date_hint", None)
+        result.pop("time_hint", None)
 
     explicit_date = re.search(r"\b(\d{1,2})[./-](\d{1,2})(?:[./-](\d{4}))?\b", text)
     if explicit_date:
