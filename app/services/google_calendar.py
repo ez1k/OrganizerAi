@@ -88,6 +88,11 @@ def search_events(title: str | None = None, start: datetime | None = None, end: 
     if start.tzinfo is None: start = start.replace(tzinfo=CALENDAR_TZ)
     if end.tzinfo is None: end = end.replace(tzinfo=CALENDAR_TZ)
 
+    if title is not None:
+        title = str(title).strip()
+        if title.casefold() in {"none", "null", "nil", "n/a", ""}:
+            title = None
+
     base_params = {
         "calendarId": "primary",
         "timeMin": _calendar_datetime(start),
@@ -96,7 +101,8 @@ def search_events(title: str | None = None, start: datetime | None = None, end: 
         "orderBy": "startTime",
         "maxResults": min(max_results, 2500),
     }
-    if title: base_params["q"] = title.strip()
+    if title is not None:
+        base_params["q"] = title
 
     logger.warning("CALENDAR SEARCH params=%s", base_params)
     events = []
