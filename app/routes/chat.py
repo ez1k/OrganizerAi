@@ -15,6 +15,7 @@ from app.services.llm_service import ask_llm
 router = APIRouter()
 WARSAW = ZoneInfo("Europe/Warsaw")
 CONFIRMATION_RE = re.compile(r"^(?:tak|potwierdzam|potwierdź|dodaj|zapisz|jasne|zgadza się|zgadza sie|ok|okej|okay|yes)[.!\s]*$", re.I)
+THANKS_RE = re.compile(r"^(?:dzięki|dzieki|dziękuję|dziekuje|super|super dzięki|super dzieki|ok dzięki|ok dzieki)[.!\s]*$", re.I)
 ALL_DELETE_RE = re.compile(r"^\s*(?:usuń|usun|skasuj|wywal)\s+(?:je|oba|obie|wszystkie|wszystko|wszystkie te)\s*[.!]?\s*$", re.I)
 DAY_NAMES = {"poniedziałek","poniedzialek","wtorek","środa","sroda","czwartek","piątek","piatek","sobota","niedziela"}
 
@@ -22,6 +23,10 @@ DAY_NAMES = {"poniedziałek","poniedzialek","wtorek","środa","sroda","czwartek"
 def _is_confirmation(message):
     normalized = " ".join(message.strip().lower().split())
     return bool(CONFIRMATION_RE.fullmatch(normalized) or (normalized.startswith("tak") and "potwierdz" in normalized))
+
+
+def _is_thanks(message):
+    return bool(THANKS_RE.fullmatch(" ".join(message.strip().lower().split())))
 
 
 def _is_number_selection(message):
@@ -51,9 +56,9 @@ def _merge_search(draft, candidate):
 def _extract_search_criteria(message, criteria):
     text = " ".join(str(message).strip().lower().split())
     result = dict(criteria or {})
-    if re.search(r"\bnajbliższe\s+(?:dwa|2)\s+tygodnie\b|\bnajbliższych\s+(?:dwa|2)\s+tygodni\b", text):
+    if re.search(r"\bnajbliższe\s+(?:dwa|2)\s+tygodnie\b|\bnajbliższych\s+(?:dwa|2)\s+tygodni(?:e|ach)?\b", text):
         result["range_type"], result["range_days"] = "next_days", 14
-    elif re.search(r"\bnajbliższe\s+(?:wydarzenia|dni)\b", text):
+    elif re.search(r"\bnajbliższe\s+(?:wydarzenia|dni)\b|\bnajbliższych\s+wydarze(?:ń|nia)\b", text):
         result["range_type"], result["range_days"] = "next_days", 14
     elif re.search(r"\b(?:w|na)\s+tym\s+tygodniu\b", text):
         result["range_type"] = "this_week"
@@ -155,7 +160,6 @@ def _search_calendar(criteria):
             return filtered
         return events
     if not date_hint:
-        # A generic "what are my upcoming events?" means the next 14 days.
         start, end = _search_range({"range_type":"next_days","range_days":14})
         return search_events(title=title, start=start, end=end, max_results=100)
     day_start, day_end = _day_range(date_hint)
