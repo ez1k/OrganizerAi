@@ -1,11 +1,13 @@
 """LLM adapter for structured interpretation of OrganizerAI messages."""
 
 import json
+import logging
 
 import requests
 
 from app.services.database import find_learning_examples, format_learning_examples
 
+logger = logging.getLogger(__name__)
 OLLAMA_URL = "http://localhost:11434/api/chat"
 MODEL = "mistral"
 
@@ -74,8 +76,10 @@ def ask_llm(
     try:
         examples = find_learning_examples(user_id, message, limit=3)
     except Exception:
-        # The assistant should remain usable if SQL Server is temporarily down.
+        logger.exception("Failed to load verified learning examples for user_id=%s", user_id)
         examples = []
+
+    logger.info("LLM verified learning examples user_id=%s count=%s", user_id, len(examples))
     examples_context = format_learning_examples(examples)
 
     for item in history[-20:]:
