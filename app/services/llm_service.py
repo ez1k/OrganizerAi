@@ -42,7 +42,8 @@ ZASADY:
 14. DELETE i CREATE wymagają potwierdzenia backendu.
 15. Jeśli użytkownik pyta o coś niezależnego od poprzedniego draftu, nie kontynuuj starego draftu.
 16. Odpowiedź po polsku i krótka.
-17. ZWRÓĆ WYŁĄCZNIE poprawny JSON.
+17. Jeśli dostajesz ZWERYFIKOWANE PRZYKŁADY, traktuj je jako wzorce semantyczne podobnych wypowiedzi. Nie kopiuj z nich dat, godzin, tytułów ani innych wartości, których nie ma w bieżącej wiadomości lub aktualnym stanie.
+18. ZWRÓĆ WYŁĄCZNIE poprawny JSON.
 
 FORMAT:
 {
@@ -64,9 +65,9 @@ def ask_llm(
 ) -> dict:
     """Ask Ollama for a structured interpretation of the current user message.
 
-    Stored examples are read here as few-shot context, but writes are handled by
-    the chat route after backend normalization/execution. This prevents the raw
-    model interpretation and the backend result from being stored twice.
+    Only explicitly verified SQL examples are read here as few-shot context.
+    Writes are handled by the backend/feedback flow so raw model output cannot
+    silently become trusted training context.
     """
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
 
