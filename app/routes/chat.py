@@ -1,4 +1,5 @@
 import json
+import logging
 import re
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -12,6 +13,7 @@ from app.services.database import save_learning_example
 from app.services.google_calendar import create_event, delete_event, search_events
 from app.services.llm_service import ask_llm
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 WARSAW = ZoneInfo("Europe/Warsaw")
 WEEKDAYS_PL = (
@@ -274,8 +276,10 @@ def _last_matches(state):
 
 
 def _save_learning(request, result):
-    try: save_learning_example(request.user_id, request.message, result, corrected=False)
-    except Exception: pass
+    try:
+        save_learning_example(request.user_id, request.message, result, corrected=False)
+    except Exception:
+        logger.exception("Failed to save learning example for user_id=%s", request.user_id)
 
 
 @router.post("/chat")
