@@ -14,6 +14,15 @@ from app.services.llm_service import ask_llm
 
 router = APIRouter()
 WARSAW = ZoneInfo("Europe/Warsaw")
+WEEKDAYS_PL = (
+    "poniedziałek",
+    "wtorek",
+    "środa",
+    "czwartek",
+    "piątek",
+    "sobota",
+    "niedziela",
+)
 CONFIRMATION_RE = re.compile(r"^(?:tak|potwierdzam|potwierdź|dodaj|zapisz|jasne|zgadza się|zgadza sie|ok|okej|okay|yes)[.!\s]*$", re.I)
 THANKS_RE = re.compile(r"^(?:dzięki|dzieki|dziękuję|dziekuje|super|super dzięki|super dzieki|ok dzięki|ok dzieki)[.!\s]*$", re.I)
 ALL_DELETE_RE = re.compile(r"^\s*(?:usuń|usun|skasuj|wywal)\s+(?:je|oba|obie|wszystkie|wszystko|wszystkie te)\s*[.!]?\s*$", re.I)
@@ -198,9 +207,57 @@ def _search_calendar(criteria):
     return search_events(title=title, start=target-timedelta(minutes=2), end=target+timedelta(minutes=2), max_results=100)
 
 
+def _calendar_event_datetime(value):
+    """Parse a Google Calendar date/dateTime value and convert it to Warsaw time."""
+    if not value:
+        return None, False
+    text = str(value)
+    all_day = bool(re.fullmatch(r"\d{4}-\d{2}-\d{2}", text))
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None, all_day
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=WARSAW)
+    else:
+        parsed = parsed.astimezone(WARSAW)
+    return parsed, all_day
+
+
+def _event_count_label(count):
+    if count == 1:
+        return "wydarzenie"
+    if 2 <= count % 10 <= 4 and not 12 <= count % 100 <= 14:
+        return "wydarzenia"
+    return "wydarzeń"
+
+
+def _format_event_line(index, event):
+    title = str(event.get("title") or "Bez nazwy")
+    start, all_day = _calendar_event_datetime(event.get("start"))
+    end, _ = _calendar_event_datetime(event.get("end"))
+
+    if not start:
+        return f"{index}. {title} — {event.get('start', '?')} – {event.get('end', '?')}"
+
+    date_label = f"{WEEKDAYS_PL[start.weekday()]}, {start:%d.%m.%Y}"
+    if all_day:
+        return f"{index}. {title} — {date_label} (cały dzień)"
+    if end and end.date() == start.date():
+        return f"{index}. {title} — {date_label}, {start:%H:%M}–{end:%H:%M}"
+    if end:
+        end_label = f"{WEEKDAYS_PL[end.weekday()]}, {end:%d.%m.%Y}, {end:%H:%M}"
+        return f"{index}. {title} — {date_label}, {start:%H:%M} – {end_label}"
+    return f"{index}. {title} — {date_label}, {start:%H:%M}"
+
+
 def _format_events(events):
-    if not events: return "Nie znalazłem żadnych wydarzeń."
-    return "Znalazłem:\n" + "\n".join(f"{i}. {e['title']} — {e.get('start','?')} – {e.get('end','?')}" for i,e in enumerate(events,1))
+    """Render machine-oriented calendar values as concise Polish chat text."""
+    if not events:
+        return "Nie znalazłem żadnych wydarzeń."
+    count = len(events)
+    header = f"Znalazłem {count} {_event_count_label(count)}:"
+    return header + "\n" + "\n".join(_format_event_line(i, event) for i, event in enumerate(events, 1))
 
 
 class CalendarAuthRequired(Exception): pass
