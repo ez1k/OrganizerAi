@@ -12,6 +12,16 @@ BEGIN
 END;
 GO
 
+-- Stable development identity used by the local Streamlit/FastAPI setup.
+-- The application also creates this row automatically when needed, so this
+-- seed is safe for a fresh database and makes the local mapping explicit.
+IF NOT EXISTS (SELECT 1 FROM dbo.users WHERE external_id = N'local-user')
+BEGIN
+    INSERT INTO dbo.users (id, external_id)
+    VALUES ('00000000-0000-0000-0000-000000000001', N'local-user');
+END;
+GO
+
 IF OBJECT_ID('dbo.learning_examples', 'U') IS NULL
 BEGIN
     CREATE TABLE dbo.learning_examples (
