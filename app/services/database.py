@@ -17,19 +17,90 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
 
 
+DEFAULT_SQL_SERVER_CONNECTION = (
+    "Server=DESKTOP-SN6B47K;"
+    "Database=ai_organizer;"
+    "Trusted_Connection=Yes;"
+    "Encrypt=Yes;"
+    "TrustServerCertificate=Yes;"
+    "APP=OrganizerAI"
+)
 SQL_SERVER_CONNECTION = os.getenv(
     "SQL_SERVER_CONNECTION",
-    "Data Source=DESKTOP-SN6B47K;Initial Catalog=ai_organizer;Integrated Security=True;Persist Security Info=False;Pooling=False;MultipleActiveResultSets=False;Encrypt=True;TrustServerCertificate=True;Application Name=OrganizerAI;Command Timeout=0",
+    DEFAULT_SQL_SERVER_CONNECTION,
 )
 LOCAL_USER_EXTERNAL_ID = os.getenv("LOCAL_USER_EXTERNAL_ID", "local-user")
 LOCAL_USER_DB_ID = os.getenv("LOCAL_USER_DB_ID", "00000000-0000-0000-0000-000000000001")
+
+
+def _odbc_boolean(value: str) -> str | None:
+    """Convert common boolean spellings to ODBC ``Yes``/``No`` values."""
+    normalized = str(value).strip().casefold()
+    if normalized in {"true", "1", "yes", "y", "on", "sspi"}:
+        return "Yes"
+    if normalized in {"false", "0", "no", "n", "off"}:
+        return "No"
+    return None
+
+
+def _normalize_odbc_connection_string(raw_connection: str) -> str:
+    """Normalize SSMS-style connection options for Microsoft ODBC Driver 18.
+
+    SSMS exports options such as ``Encrypt=True`` and
+    ``MultipleActiveResultSets=False``. Microsoft ODBC Driver 18 expects
+    ODBC-specific values/keywords such as ``Encrypt=Yes`` and
+    ``MARS_Connection=No``. Options that are not connection-string keywords for
+    this driver are omitted here.
+    """
+    normalized_parts: list[str] = []
+
+    for raw_part in str(raw_connection).split(";"):
+        part = raw_part.strip()
+        if not part or "=" not in part:
+            continue
+
+        key, value = (item.strip() for item in part.split("=", 1))
+        lookup = key.casefold()
+
+        if lookup in {"pooling", "persist security info", "command timeout"}:
+            continue
+
+        if lookup == "data source":
+            key = "Server"
+        elif lookup == "initial catalog":
+            key = "Database"
+        elif lookup == "integrated security":
+            key = "Trusted_Connection"
+            value = _odbc_boolean(value) or value
+        elif lookup == "multipleactiveresultsets":
+            key = "MARS_Connection"
+            value = _odbc_boolean(value) or value
+        elif lookup == "application name":
+            key = "APP"
+        elif lookup == "encrypt":
+            key = "Encrypt"
+            value = _odbc_boolean(value) or value
+        elif lookup == "trustservercertificate":
+            key = "TrustServerCertificate"
+            value = _odbc_boolean(value) or value
+        elif lookup == "trusted_connection":
+            key = "Trusted_Connection"
+            value = _odbc_boolean(value) or value
+        elif lookup == "mars_connection":
+            key = "MARS_Connection"
+            value = _odbc_boolean(value) or value
+
+        normalized_parts.append(f"{key}={value}")
+
+    return ";".join(normalized_parts)
 
 
 @lru_cache(maxsize=1)
 def get_engine() -> Engine:
     """Create and cache the SQLAlchemy engine used by the application."""
     odbc = os.getenv("SQL_SERVER_ODBC_DRIVER", "ODBC Driver 18 for SQL Server")
-    connection = f"DRIVER={{{odbc}}};{SQL_SERVER_CONNECTION}"
+    connection_options = _normalize_odbc_connection_string(SQL_SERVER_CONNECTION)
+    connection = f"DRIVER={{{odbc}}};{connection_options}"
     url = "mssql+pyodbc:///?odbc_connect=" + quote_plus(connection)
     return create_engine(url, pool_pre_ping=True, future=True)
 
