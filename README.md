@@ -1,6 +1,6 @@
 # OrganizerAI
 
-OrganizerAI to konwersacyjny asystent kalendarza. Użytkownik rozmawia z aplikacją po polsku, a backend interpretuje intencję, wykonuje operacje w Google Calendar i docelowo wykorzystuje SQL Server do zapisywania przykładów uczenia i feedbacku.
+OrganizerAI to konwersacyjny asystent kalendarza. Użytkownik rozmawia z aplikacją po polsku, a backend interpretuje intencję, wykonuje operacje w Google Calendar i wykorzystuje SQL Server do zapisywania przykładów uczenia.
 
 ## Architektura
 
@@ -51,7 +51,8 @@ Główna logika konwersacyjna aplikacji. Odpowiada za:
 - składanie kryteriów wyszukiwania,
 - wykonywanie operacji Google Calendar,
 - przekazywanie bardziej swobodnych wypowiedzi do LLM,
-- formatowanie wyników wyszukiwania do tekstu przeznaczonego dla użytkownika.
+- formatowanie wyników wyszukiwania do tekstu przeznaczonego dla użytkownika,
+- zapis znormalizowanych przykładów uczenia po stronie backendu.
 
 Dane z Google Calendar pozostają wewnętrznie w ISO 8601, ale `_format_events()` zamienia je na czytelny polski format, np.:
 
@@ -88,55 +89,76 @@ http://localhost:11434/api/chat
 
 Model nie wykonuje operacji kalendarzowych bezpośrednio. Zwraca ustrukturyzowany JSON, a operacje wykonuje backend.
 
+Warstwa LLM odczytuje przykłady z SQL Server jako few-shot context, ale nie zapisuje już automatycznie każdej swojej surowej interpretacji. Zapis jest wykonywany przez backend po normalizacji, co ogranicza dublowanie przykładów.
+
 ### `app/services/database.py`
 
-Warstwa SQLAlchemy/pyodbc do SQL Server. Odpowiada za zapis i wyszukiwanie przykładów uczenia.
+Warstwa SQLAlchemy/pyodbc do SQL Server. Odpowiada za:
 
-Aktualnie wymaga jeszcze poprawienia mapowania identyfikatora użytkownika: frontend/backend posługują się zewnętrznym stringiem, np. `local-user`, podczas gdy `learning_examples.user_id` w schemacie SQL jest kluczem `UNIQUEIDENTIFIER` do tabeli `users`.
+- konfigurację połączenia,
+- mapowanie zewnętrznego `user_id` na `dbo.users.id`,
+- automatyczne tworzenie użytkownika, jeśli jeszcze nie istnieje,
+- zapis do `learning_examples`,
+- odczyt przykładów dla tego samego użytkownika,
+- przygotowanie przykładów jako kontekstu dla modelu.
 
 ### `sql/create_learning_tables.sql`
 
-Docelowy schemat SQL Server dla:
+Schemat SQL Server dla:
 
 - `users`,
 - `learning_examples`,
 - `conversation_feedback`.
 
+Skrypt seeduje także lokalnego użytkownika developerskiego.
+
 ### `app/services/event_service.py`
 
 Starszy, tymczasowy magazyn wydarzeń w pamięci procesu (`events_db = []`). Nie jest trwałym magazynem danych i nie powinien być traktowany jako docelowa baza.
 
-## Identyfikacja użytkownika w Streamlit
+## Identyfikacja użytkownika
 
-Aktualnie użytkownik **nie jest identyfikowany po adresie IP**.
+Aktualnie aplikacja działa lokalnie z jednym stałym użytkownikiem:
 
-`app/frontend/app.py` nie wysyła pola `user_id` do `/chat`. W konsekwencji Pydantic używa domyślnej wartości z `ChatRequest`:
+```text
+external_id = local-user
+```
+
+`app/frontend/app.py` nie wysyła jeszcze własnego `user_id`, dlatego Pydantic używa wartości domyślnej z `ChatRequest`:
 
 ```text
 local-user
 ```
 
-Oznacza to, że jeśli aplikację otworzy kilku użytkowników, backend widzi ich obecnie jako tego samego użytkownika z punktu widzenia mechanizmu uczenia/bazy danych.
+Po stronie SQL Server ten identyfikator jest mapowany na:
 
-`st.session_state` jest oddzielny dla sesji Streamlit, ale nie tworzy automatycznie trwałego identyfikatora użytkownika i nie jest identyfikatorem IP.
+```text
+00000000-0000-0000-0000-000000000001
+```
 
-### Plan identyfikacji użytkownika
+Czyli aktualny przepływ wygląda tak:
 
-Etap 1, przed logowaniem:
+```text
+Streamlit
+   ↓
+user_id = local-user
+   ↓
+app/services/database.py
+   ↓
+dbo.users.external_id = local-user
+   ↓
+dbo.users.id = 00000000-0000-0000-0000-000000000001
+   ↓
+dbo.learning_examples.user_id
+```
 
-1. Wygenerować UUID przy rozpoczęciu sesji Streamlit.
-2. Zapisać go w `st.session_state.user_id`.
-3. Wysyłać `user_id` w każdym requestcie do `/chat`.
+Jeżeli rekord `local-user` już istnieje w bazie z innym UUID, aplikacja respektuje istniejący rekord zamiast go nadpisywać.
 
-Taki identyfikator rozdzieli równoczesne sesje, ale nie jest jeszcze trwałym kontem użytkownika.
+Adres IP nie jest używany jako identyfikator użytkownika.
 
-Etap 2, docelowo:
+### Docelowa identyfikacja użytkownika
 
-- dodać logowanie,
-- używać stabilnego ID konta jako `external_id`,
-- mapować `external_id` do `users.id` w SQL Server.
-
-Nie należy używać adresu IP jako głównego identyfikatora użytkownika: wiele osób może korzystać z jednego publicznego IP, a adres może się zmieniać lub pochodzić z proxy/VPN.
+Po dodaniu logowania `local-user` zostanie zastąpiony stabilnym identyfikatorem konta, np. identyfikatorem Google. Mechanizm mapowania `external_id -> users.id` pozostanie bez zmian.
 
 ## Uruchomienie lokalne
 
@@ -166,15 +188,41 @@ pyodbc>=5.1
 Połączenie jest konfigurowane przez zmienne środowiskowe:
 
 - `SQL_SERVER_CONNECTION`,
-- `SQL_SERVER_ODBC_DRIVER`.
+- `SQL_SERVER_ODBC_DRIVER`,
+- opcjonalnie `LOCAL_USER_EXTERNAL_ID`,
+- opcjonalnie `LOCAL_USER_DB_ID`.
+
+Domyślne wartości lokalnego użytkownika to:
+
+```text
+LOCAL_USER_EXTERNAL_ID=local-user
+LOCAL_USER_DB_ID=00000000-0000-0000-0000-000000000001
+```
 
 Schemat tabel znajduje się w `sql/create_learning_tables.sql`.
 
+### Pierwsze uruchomienie bazy
+
+1. Utwórz bazę `OrganizerAI`, jeśli jeszcze nie istnieje.
+2. Wykonaj `sql/create_learning_tables.sql` w SQL Server Management Studio.
+3. Zainstaluj zależności z `requirements-db.txt`.
+4. Uruchom backend i frontend.
+5. Wykonaj operację wyszukiwania lub potwierdzonego tworzenia wydarzenia.
+6. Sprawdź rekordy w `dbo.learning_examples`.
+
+Przykładowa kontrola:
+
+```sql
+SELECT u.external_id, le.message, le.result_json, le.corrected, le.created_at
+FROM dbo.learning_examples AS le
+JOIN dbo.users AS u ON u.id = le.user_id
+ORDER BY le.created_at DESC;
+```
+
 ## Najbliższe prace techniczne
 
-1. Dodać `user_id` do requestów Streamlit.
-2. Dodać `get_or_create_user(external_id)` w warstwie SQL Server.
-3. Zapisywać do `learning_examples` UUID z `users.id`, a nie bezpośrednio string `local-user`.
-4. Usunąć podwójne zapisy przykładów między `llm_service.py` i `chat.py`.
-5. Rozdzielić przykłady zweryfikowane przez użytkownika od surowych odpowiedzi modelu.
-6. Stopniowo dodawać docstringi i testy jednostkowe do parserów dat, kryteriów wyszukiwania i formatowania wydarzeń.
+1. Dodać jawny mechanizm feedbacku i oznaczania przykładów jako `corrected = 1`.
+2. Podłączyć `conversation_feedback` do procesu korekty odpowiedzi modelu.
+3. Dodać trwałe logowanie użytkowników przed wdrożeniem wieloużytkownikowym.
+4. Dodać testy jednostkowe dla warstwy SQL, parserów dat, kryteriów wyszukiwania i formatowania wydarzeń.
+5. Stopniowo dodawać docstringi do pozostałych stabilnych modułów.
