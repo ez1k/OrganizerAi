@@ -183,19 +183,22 @@ def _learning_example_exists(
 
     Existing rows may have been serialized with different whitespace, key order
     or explicit null fields, so JSON is normalized in Python before comparison.
+    For a raw candidate (``corrected = 0``), an equivalent verified example also
+    counts as a duplicate: once a result is trusted, the same interpretation
+    should not generate more diagnostic rows.
     """
+    corrected_clause = "corrected = 1" if corrected else "corrected IN (0, 1)"
     rows = conn.execute(
-        text("""
+        text(f"""
             SELECT result_json
             FROM dbo.learning_examples
             WHERE user_id = :user_id
               AND normalized_message = :normalized_message
-              AND corrected = :corrected
+              AND {corrected_clause}
         """),
         {
             "user_id": database_user_id,
             "normalized_message": normalized_message,
-            "corrected": corrected,
         },
     ).scalars().all()
 
