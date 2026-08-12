@@ -1,7 +1,10 @@
+"""LLM adapter for structured interpretation of OrganizerAI messages."""
+
 import json
+
 import requests
 
-from app.services.database import find_learning_examples, format_learning_examples, save_learning_example
+from app.services.database import find_learning_examples, format_learning_examples
 
 OLLAMA_URL = "http://localhost:11434/api/chat"
 MODEL = "mistral"
@@ -53,12 +56,24 @@ Pola event/search mogą być częściowe.
 """
 
 
-def ask_llm(message: str, history: list[dict], draft_event: dict | None = None, user_id: str = "local-user") -> dict:
+def ask_llm(
+    message: str,
+    history: list[dict],
+    draft_event: dict | None = None,
+    user_id: str = "local-user",
+) -> dict:
+    """Ask Ollama for a structured interpretation of the current user message.
+
+    Stored examples are read here as few-shot context, but writes are handled by
+    the chat route after backend normalization/execution. This prevents the raw
+    model interpretation and the backend result from being stored twice.
+    """
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
 
     try:
         examples = find_learning_examples(user_id, message, limit=3)
     except Exception:
+        # The assistant should remain usable if SQL Server is temporarily down.
         examples = []
     examples_context = format_learning_examples(examples)
 
@@ -72,14 +87,22 @@ def ask_llm(message: str, history: list[dict], draft_event: dict | None = None, 
     if draft_event:
         context = f"\nAKTUALNY STAN:\n{json.dumps(draft_event, ensure_ascii=False)}\n"
 
-    messages.append({
-        "role": "user",
-        "content": f"{examples_context}{context}\nNOWA WIADOMOŚĆ UŻYTKOWNIKA:\n{message}"
-    })
+    messages.append(
+        {
+            "role": "user",
+            "content": f"{examples_context}{context}\nNOWA WIADOMOŚĆ UŻYTKOWNIKA:\n{message}",
+        }
+    )
 
     response = requests.post(
         OLLAMA_URL,
-        json={"model": MODEL, "messages": messages, "stream": False, "format": "json", "options": {"temperature": 0.1, "num_predict": 350}},
+        json={
+            "model": MODEL,
+            "messages": messages,
+            "stream": False,
+            "format": "json",
+            "options": {"temperature": 0.1, "num_predict": 350},
+        },
         timeout=120,
     )
     response.raise_for_status()
@@ -87,17 +110,9 @@ def ask_llm(message: str, history: list[dict], draft_event: dict | None = None, 
     result = response.json().get("message", {}).get("content", "")
     if not result.strip():
         raise ValueError("Empty response from Ollama")
+
     parsed = json.loads(result)
     if not isinstance(parsed, dict) or "reply" not in parsed or "status" not in parsed:
         raise ValueError("Invalid structured response from Ollama")
-
-    # Store the model's structured interpretation. corrected=False means it is
-    # an observation, not a guarantee that the user accepted it as correct.
-    if parsed.get("operation") in {"create", "search", "delete"}:
-        try:
-            save_learning_example(user_id, message, parsed, corrected=False)
-        except Exception:
-            # Database availability must never break the chat.
-            pass
 
     return parsed
