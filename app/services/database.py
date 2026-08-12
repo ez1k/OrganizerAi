@@ -7,7 +7,8 @@ and the database UUID.
 
 Raw backend interpretations may still be stored in ``learning_examples`` with
 ``corrected = 0`` for diagnostics. Only explicitly verified examples are read
-back as few-shot context for the LLM.
+back as few-shot context for the LLM. New raw and verified rows are deduplicated
+semantically, while existing historical raw rows remain untouched for audit.
 """
 
 import json
@@ -115,9 +116,32 @@ def _new_database_user_id(external_user_id: str) -> str:
     return str(uuid4())
 
 
+def _normalize_learning_value(value: Any) -> Any:
+    """Normalize structured learning data before comparison and persistence.
+
+    Empty optional values are removed from dictionaries so semantically equal
+    results such as ``{"title": null}`` and a missing ``title`` field compare
+    as the same learning example. Numeric zero and ``False`` are preserved.
+    """
+    if isinstance(value, dict):
+        normalized: dict[str, Any] = {}
+        for key, item in value.items():
+            if item is None or item == "":
+                continue
+            normalized_item = _normalize_learning_value(item)
+            if isinstance(normalized_item, dict) and not normalized_item:
+                continue
+            normalized[str(key)] = normalized_item
+        return normalized
+    if isinstance(value, list):
+        return [_normalize_learning_value(item) for item in value]
+    return value
+
+
 def _canonical_json(value: dict[str, Any]) -> str:
     """Serialize structured learning data deterministically for comparison."""
-    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    normalized = _normalize_learning_value(value)
+    return json.dumps(normalized, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
 
 def get_or_create_user_id(external_user_id: str | None) -> str:
@@ -148,35 +172,62 @@ def get_or_create_user_id(external_user_id: str | None) -> str:
         return database_user_id
 
 
+def _learning_example_exists(
+    conn: Connection,
+    database_user_id: str,
+    normalized_message: str,
+    result_json: str,
+    corrected: bool,
+) -> bool:
+    """Check whether an equivalent learning example already exists.
+
+    Existing rows may have been serialized with different whitespace, key order
+    or explicit null fields, so JSON is normalized in Python before comparison.
+    """
+    rows = conn.execute(
+        text("""
+            SELECT result_json
+            FROM dbo.learning_examples
+            WHERE user_id = :user_id
+              AND normalized_message = :normalized_message
+              AND corrected = :corrected
+        """),
+        {
+            "user_id": database_user_id,
+            "normalized_message": normalized_message,
+            "corrected": corrected,
+        },
+    ).scalars().all()
+
+    for stored_result_json in rows:
+        try:
+            stored_canonical = _canonical_json(json.loads(stored_result_json))
+        except (TypeError, ValueError, json.JSONDecodeError):
+            stored_canonical = str(stored_result_json).strip()
+        if stored_canonical == result_json:
+            return True
+    return False
+
+
 def _insert_learning_example(
     conn: Connection,
     database_user_id: str,
     message: str,
     result: dict[str, Any],
     corrected: bool,
-) -> None:
-    """Insert one learning row, deduplicating verified examples."""
+) -> bool:
+    """Insert one learning row unless an equivalent row already exists."""
     normalized_message = " ".join(str(message).lower().split())
     result_json = _canonical_json(result)
 
-    if corrected:
-        duplicate = conn.execute(
-            text("""
-                SELECT TOP 1 id
-                FROM dbo.learning_examples
-                WHERE user_id = :user_id
-                  AND normalized_message = :normalized_message
-                  AND result_json = :result_json
-                  AND corrected = 1
-            """),
-            {
-                "user_id": database_user_id,
-                "normalized_message": normalized_message,
-                "result_json": result_json,
-            },
-        ).scalar_one_or_none()
-        if duplicate is not None:
-            return
+    if _learning_example_exists(
+        conn,
+        database_user_id,
+        normalized_message,
+        result_json,
+        corrected,
+    ):
+        return False
 
     conn.execute(
         text("""
@@ -203,6 +254,7 @@ def _insert_learning_example(
             "corrected": corrected,
         },
     )
+    return True
 
 
 def save_learning_example(
