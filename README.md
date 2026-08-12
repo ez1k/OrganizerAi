@@ -209,6 +209,37 @@ LOCAL_USER_DB_ID=00000000-0000-0000-0000-000000000001
 
 Schemat tabel znajduje się w `sql/create_learning_tables.sql`.
 
+### Polityka stref czasowych
+
+Znaczniki techniczne w SQL Server, takie jak `users.created_at`, `learning_examples.created_at` i `conversation_feedback.created_at`, są zapisywane w UTC przez `SYSUTCDATETIME()`.
+
+Przykład:
+
+```text
+SQL Server: 2026-08-12 21:28:40 UTC
+Warszawa:   2026-08-12 23:28:40 CEST
+```
+
+To jest zamierzone. Zasada projektu jest następująca:
+
+```text
+SQL Server / created_at: UTC
+Google Calendar / logika kalendarza: Europe/Warsaw
+UI: konwersja UTC do strefy użytkownika przy wyświetlaniu
+```
+
+Nie należy zmieniać `created_at` w bazie na czas lokalny. Dzięki temu dane pozostają jednoznaczne również po dodaniu użytkowników z innych stref czasowych.
+
+Przykładowe wyświetlenie czasu warszawskiego w SQL Server:
+
+```sql
+SELECT
+    created_at AS created_at_utc,
+    created_at AT TIME ZONE 'UTC'
+               AT TIME ZONE 'Central European Standard Time' AS created_at_warsaw
+FROM dbo.learning_examples;
+```
+
 ### Pierwsze uruchomienie bazy
 
 1. Utwórz bazę `ai_organizer`, jeśli jeszcze nie istnieje.
