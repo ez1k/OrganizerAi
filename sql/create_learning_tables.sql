@@ -1,4 +1,4 @@
-USE OrganizerAI;
+USE [ai_organizer];
 GO
 
 IF OBJECT_ID('dbo.users', 'U') IS NULL
