@@ -102,6 +102,8 @@ Warstwa SQLAlchemy/pyodbc do SQL Server. Odpowiada za:
 - odczyt przykładów dla tego samego użytkownika,
 - przygotowanie przykładów jako kontekstu dla modelu.
 
+Domyślna lokalna baza danych to `ai_organizer`.
+
 ### `sql/create_learning_tables.sql`
 
 Schemat SQL Server dla:
@@ -110,7 +112,7 @@ Schemat SQL Server dla:
 - `learning_examples`,
 - `conversation_feedback`.
 
-Skrypt seeduje także lokalnego użytkownika developerskiego.
+Skrypt działa w bazie `ai_organizer` i seeduje także lokalnego użytkownika developerskiego.
 
 ### `app/services/event_service.py`
 
@@ -145,11 +147,11 @@ user_id = local-user
    ↓
 app/services/database.py
    ↓
-dbo.users.external_id = local-user
+ai_organizer.dbo.users.external_id = local-user
    ↓
-dbo.users.id = 00000000-0000-0000-0000-000000000001
+ai_organizer.dbo.users.id = 00000000-0000-0000-0000-000000000001
    ↓
-dbo.learning_examples.user_id
+ai_organizer.dbo.learning_examples.user_id
 ```
 
 Jeżeli rekord `local-user` już istnieje w bazie z innym UUID, aplikacja respektuje istniejący rekord zamiast go nadpisywać.
@@ -192,6 +194,12 @@ Połączenie jest konfigurowane przez zmienne środowiskowe:
 - opcjonalnie `LOCAL_USER_EXTERNAL_ID`,
 - opcjonalnie `LOCAL_USER_DB_ID`.
 
+Domyślny connection string wskazuje jawnie na bazę:
+
+```text
+Initial Catalog=ai_organizer
+```
+
 Domyślne wartości lokalnego użytkownika to:
 
 ```text
@@ -203,16 +211,18 @@ Schemat tabel znajduje się w `sql/create_learning_tables.sql`.
 
 ### Pierwsze uruchomienie bazy
 
-1. Utwórz bazę `OrganizerAI`, jeśli jeszcze nie istnieje.
+1. Utwórz bazę `ai_organizer`, jeśli jeszcze nie istnieje.
 2. Wykonaj `sql/create_learning_tables.sql` w SQL Server Management Studio.
 3. Zainstaluj zależności z `requirements-db.txt`.
 4. Uruchom backend i frontend.
 5. Wykonaj operację wyszukiwania lub potwierdzonego tworzenia wydarzenia.
-6. Sprawdź rekordy w `dbo.learning_examples`.
+6. Sprawdź rekordy w `ai_organizer.dbo.learning_examples`.
 
 Przykładowa kontrola:
 
 ```sql
+USE [ai_organizer];
+
 SELECT u.external_id, le.message, le.result_json, le.corrected, le.created_at
 FROM dbo.learning_examples AS le
 JOIN dbo.users AS u ON u.id = le.user_id
