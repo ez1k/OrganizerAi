@@ -109,21 +109,12 @@ def _extract_search_criteria(message, criteria):
             result.pop("range_type", None); result.pop("range_days", None)
             break
 
-    time_match = re.search(
-        r"\b(?:o\s*)?(\d{1,2}):(\d{2})\b",
-        text
-    )
-
+    time_match = re.search(r"\b(\d{1,2}):(\d{2})\b", text)
     if not time_match:
-        time_match = re.search(
-            r"\bo\s+(\d{1,2})(?:\s*(?:godz(?:ina|iny|in)?|h))?\b",
-            text
-        )
-
+        time_match = re.search(r"\bo\s+(\d{1,2})(?:\s*(?:godz(?:ina|iny|in)?|h))?\b", text)
     if time_match:
         hour = int(time_match.group(1))
-        minute = int(time_match.group(2) or 0) if time_match.lastindex >= 2 else 0
-
+        minute = int(time_match.group(2) or 0) if time_match.lastindex and time_match.lastindex >= 2 else 0
         if 0 <= hour <= 23 and 0 <= minute <= 59:
             result["time_hint"] = f"{hour:02d}:{minute:02d}"
 
