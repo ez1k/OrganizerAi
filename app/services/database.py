@@ -19,7 +19,7 @@ from sqlalchemy.engine import Engine
 
 SQL_SERVER_CONNECTION = os.getenv(
     "SQL_SERVER_CONNECTION",
-    "Data Source=DESKTOP-SN6B47K;Integrated Security=True;Persist Security Info=False;Pooling=False;MultipleActiveResultSets=False;Encrypt=True;TrustServerCertificate=True;Application Name=OrganizerAI;Command Timeout=0",
+    "Data Source=DESKTOP-SN6B47K;Initial Catalog=ai_organizer;Integrated Security=True;Persist Security Info=False;Pooling=False;MultipleActiveResultSets=False;Encrypt=True;TrustServerCertificate=True;Application Name=OrganizerAI;Command Timeout=0",
 )
 LOCAL_USER_EXTERNAL_ID = os.getenv("LOCAL_USER_EXTERNAL_ID", "local-user")
 LOCAL_USER_DB_ID = os.getenv("LOCAL_USER_DB_ID", "00000000-0000-0000-0000-000000000001")
