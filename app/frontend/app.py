@@ -1,9 +1,11 @@
 """Streamlit frontend for the OrganizerAI conversational calendar."""
 
+import os
+
 import requests
 import streamlit as st
 
-API_URL = "http://localhost:8000"
+API_URL = os.getenv("ORGANIZER_API_URL", "http://127.0.0.1:8001").rstrip("/")
 USER_ID = "local-user"
 FEEDBACK_STATUSES = {
     "ready_for_confirmation",
