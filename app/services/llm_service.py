@@ -1,11 +1,13 @@
 """LLM adapter for structured interpretation of OrganizerAI messages."""
 
 import json
+import logging
 
 import requests
 
 from app.services.database import find_learning_examples, format_learning_examples
 
+logger = logging.getLogger(__name__)
 OLLAMA_URL = "http://localhost:11434/api/chat"
 MODEL = "mistral"
 
@@ -42,7 +44,8 @@ ZASADY:
 14. DELETE i CREATE wymagają potwierdzenia backendu.
 15. Jeśli użytkownik pyta o coś niezależnego od poprzedniego draftu, nie kontynuuj starego draftu.
 16. Odpowiedź po polsku i krótka.
-17. ZWRÓĆ WYŁĄCZNIE poprawny JSON.
+17. Jeśli dostajesz ZWERYFIKOWANE PRZYKŁADY, traktuj je jako wzorce semantyczne podobnych wypowiedzi. Nie kopiuj z nich dat, godzin, tytułów ani innych wartości, których nie ma w bieżącej wiadomości lub aktualnym stanie.
+18. ZWRÓĆ WYŁĄCZNIE poprawny JSON.
 
 FORMAT:
 {
@@ -64,17 +67,19 @@ def ask_llm(
 ) -> dict:
     """Ask Ollama for a structured interpretation of the current user message.
 
-    Stored examples are read here as few-shot context, but writes are handled by
-    the chat route after backend normalization/execution. This prevents the raw
-    model interpretation and the backend result from being stored twice.
+    Only explicitly verified SQL examples are read here as few-shot context.
+    Writes are handled by the backend/feedback flow so raw model output cannot
+    silently become trusted training context.
     """
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
 
     try:
         examples = find_learning_examples(user_id, message, limit=3)
     except Exception:
-        # The assistant should remain usable if SQL Server is temporarily down.
+        logger.exception("Failed to load verified learning examples for user_id=%s", user_id)
         examples = []
+
+    logger.info("LLM verified learning examples user_id=%s count=%s", user_id, len(examples))
     examples_context = format_learning_examples(examples)
 
     for item in history[-20:]:

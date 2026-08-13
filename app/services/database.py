@@ -1,9 +1,14 @@
-"""SQL Server persistence for OrganizerAI learning examples.
+"""SQL Server persistence for OrganizerAI learning examples and feedback.
 
 The chat API uses a stable external user identifier (currently ``local-user``
 for local development). SQL Server stores users with a ``UNIQUEIDENTIFIER``
 primary key, so this module owns the mapping between the external identifier
 and the database UUID.
+
+Raw backend interpretations may still be stored in ``learning_examples`` with
+``corrected = 0`` for diagnostics. Only explicitly verified examples are read
+back as few-shot context for the LLM. New raw and verified rows are deduplicated
+semantically, while existing historical raw rows remain untouched for audit.
 """
 
 import json
@@ -14,7 +19,7 @@ from urllib.parse import quote_plus
 from uuid import UUID, uuid4
 
 from sqlalchemy import create_engine, text
-from sqlalchemy.engine import Engine
+from sqlalchemy.engine import Connection, Engine
 
 
 DEFAULT_SQL_SERVER_CONNECTION = (
@@ -44,14 +49,7 @@ def _odbc_boolean(value: str) -> str | None:
 
 
 def _normalize_odbc_connection_string(raw_connection: str) -> str:
-    """Normalize SSMS-style connection options for Microsoft ODBC Driver 18.
-
-    SSMS exports options such as ``Encrypt=True`` and
-    ``MultipleActiveResultSets=False``. Microsoft ODBC Driver 18 expects
-    ODBC-specific values/keywords such as ``Encrypt=Yes`` and
-    ``MARS_Connection=No``. Options that are not connection-string keywords for
-    this driver are omitted here.
-    """
+    """Normalize SSMS-style connection options for Microsoft ODBC Driver 18."""
     normalized_parts: list[str] = []
 
     for raw_part in str(raw_connection).split(";"):
@@ -118,14 +116,36 @@ def _new_database_user_id(external_user_id: str) -> str:
     return str(uuid4())
 
 
-def get_or_create_user_id(external_user_id: str | None) -> str:
-    """Resolve an external user identifier to ``users.id``.
+def _normalize_learning_value(value: Any) -> Any:
+    """Normalize structured learning data before comparison and persistence.
 
-    For local development, ``local-user`` always receives the configured
-    ``LOCAL_USER_DB_ID`` on first creation. If the row already exists, its
-    existing UUID is respected. The lock keeps concurrent first requests from
-    trying to create the same ``external_id`` twice.
+    Empty optional values are removed from dictionaries so semantically equal
+    results such as ``{"title": null}`` and a missing ``title`` field compare
+    as the same learning example. Numeric zero and ``False`` are preserved.
     """
+    if isinstance(value, dict):
+        normalized: dict[str, Any] = {}
+        for key, item in value.items():
+            if item is None or item == "":
+                continue
+            normalized_item = _normalize_learning_value(item)
+            if isinstance(normalized_item, dict) and not normalized_item:
+                continue
+            normalized[str(key)] = normalized_item
+        return normalized
+    if isinstance(value, list):
+        return [_normalize_learning_value(item) for item in value]
+    return value
+
+
+def _canonical_json(value: dict[str, Any]) -> str:
+    """Serialize structured learning data deterministically for comparison."""
+    normalized = _normalize_learning_value(value)
+    return json.dumps(normalized, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
+def get_or_create_user_id(external_user_id: str | None) -> str:
+    """Resolve an external user identifier to ``users.id``."""
     external_id = _normalize_external_user_id(external_user_id)
 
     with get_engine().begin() as conn:
@@ -152,6 +172,94 @@ def get_or_create_user_id(external_user_id: str | None) -> str:
         return database_user_id
 
 
+def _learning_example_exists(
+    conn: Connection,
+    database_user_id: str,
+    normalized_message: str,
+    result_json: str,
+    corrected: bool,
+) -> bool:
+    """Check whether an equivalent learning example already exists.
+
+    Existing rows may have been serialized with different whitespace, key order
+    or explicit null fields, so JSON is normalized in Python before comparison.
+    For a raw candidate (``corrected = 0``), an equivalent verified example also
+    counts as a duplicate: once a result is trusted, the same interpretation
+    should not generate more diagnostic rows.
+    """
+    corrected_clause = "corrected = 1" if corrected else "corrected IN (0, 1)"
+    rows = conn.execute(
+        text(f"""
+            SELECT result_json
+            FROM dbo.learning_examples
+            WHERE user_id = :user_id
+              AND normalized_message = :normalized_message
+              AND {corrected_clause}
+        """),
+        {
+            "user_id": database_user_id,
+            "normalized_message": normalized_message,
+        },
+    ).scalars().all()
+
+    for stored_result_json in rows:
+        try:
+            stored_canonical = _canonical_json(json.loads(stored_result_json))
+        except (TypeError, ValueError, json.JSONDecodeError):
+            stored_canonical = str(stored_result_json).strip()
+        if stored_canonical == result_json:
+            return True
+    return False
+
+
+def _insert_learning_example(
+    conn: Connection,
+    database_user_id: str,
+    message: str,
+    result: dict[str, Any],
+    corrected: bool,
+) -> bool:
+    """Insert one learning row unless an equivalent row already exists."""
+    normalized_message = " ".join(str(message).lower().split())
+    result_json = _canonical_json(result)
+
+    if _learning_example_exists(
+        conn,
+        database_user_id,
+        normalized_message,
+        result_json,
+        corrected,
+    ):
+        return False
+
+    conn.execute(
+        text("""
+            INSERT INTO dbo.learning_examples (
+                user_id,
+                message,
+                normalized_message,
+                result_json,
+                corrected
+            )
+            VALUES (
+                :user_id,
+                :message,
+                :normalized_message,
+                :result_json,
+                :corrected
+            )
+        """),
+        {
+            "user_id": database_user_id,
+            "message": message,
+            "normalized_message": normalized_message,
+            "result_json": result_json,
+            "corrected": corrected,
+        },
+    )
+    return True
+
+
 def save_learning_example(
     user_id: str,
     message: str,
@@ -160,34 +268,91 @@ def save_learning_example(
 ) -> None:
     """Persist one interpreted chat example for the given external user id."""
     database_user_id = get_or_create_user_id(user_id)
-    normalized_message = " ".join(str(message).lower().split())
-
     with get_engine().begin() as conn:
-        conn.execute(
+        _insert_learning_example(conn, database_user_id, message, result, corrected)
+
+
+def save_conversation_feedback(
+    user_id: str,
+    message: str,
+    model_result: dict[str, Any],
+) -> int:
+    """Store feedback candidate and return its database id.
+
+    A row without ``corrected_result_json`` means the interpretation has not
+    been verified yet (or has explicitly been rejected and awaits a correction).
+    """
+    database_user_id = get_or_create_user_id(user_id)
+    with get_engine().begin() as conn:
+        feedback_id = conn.execute(
             text("""
-                INSERT INTO dbo.learning_examples (
+                INSERT INTO dbo.conversation_feedback (
                     user_id,
                     message,
-                    normalized_message,
-                    result_json,
-                    corrected
+                    model_result_json,
+                    corrected_result_json
                 )
+                OUTPUT INSERTED.id
                 VALUES (
                     :user_id,
                     :message,
-                    :normalized_message,
-                    :result_json,
-                    :corrected
+                    :model_result_json,
+                    NULL
                 )
             """),
             {
                 "user_id": database_user_id,
                 "message": message,
-                "normalized_message": normalized_message,
-                "result_json": json.dumps(result, ensure_ascii=False),
-                "corrected": corrected,
+                "model_result_json": _canonical_json(model_result),
+            },
+        ).scalar_one()
+    return int(feedback_id)
+
+
+def verify_conversation_feedback(
+    user_id: str,
+    feedback_id: int,
+    corrected_result: dict[str, Any],
+) -> bool:
+    """Attach the verified result and promote it to a trusted learning example."""
+    database_user_id = get_or_create_user_id(user_id)
+    corrected_json = _canonical_json(corrected_result)
+
+    with get_engine().begin() as conn:
+        feedback = conn.execute(
+            text("""
+                SELECT id, message
+                FROM dbo.conversation_feedback WITH (UPDLOCK, HOLDLOCK)
+                WHERE id = :feedback_id
+                  AND user_id = :user_id
+            """),
+            {"feedback_id": feedback_id, "user_id": database_user_id},
+        ).mappings().one_or_none()
+
+        if feedback is None:
+            return False
+
+        conn.execute(
+            text("""
+                UPDATE dbo.conversation_feedback
+                SET corrected_result_json = :corrected_result_json
+                WHERE id = :feedback_id
+                  AND user_id = :user_id
+            """),
+            {
+                "feedback_id": feedback_id,
+                "user_id": database_user_id,
+                "corrected_result_json": corrected_json,
             },
         )
+        _insert_learning_example(
+            conn,
+            database_user_id,
+            str(feedback["message"]),
+            corrected_result,
+            corrected=True,
+        )
+    return True
 
 
 def find_learning_examples(
@@ -195,7 +360,7 @@ def find_learning_examples(
     message: str,
     limit: int = 3,
 ) -> list[dict[str, Any]]:
-    """Find recent examples belonging to the same logical application user."""
+    """Find similar, explicitly verified examples for the same user."""
     tokens = set(" ".join(str(message).lower().split()).split())
     if not tokens:
         return []
@@ -204,10 +369,11 @@ def find_learning_examples(
     with get_engine().connect() as conn:
         rows = conn.execute(
             text("""
-                SELECT TOP 20 id, message, normalized_message, result_json, corrected
+                SELECT TOP 50 id, message, normalized_message, result_json, corrected
                 FROM dbo.learning_examples
                 WHERE user_id = :user_id
-                ORDER BY corrected DESC, created_at DESC
+                  AND corrected = 1
+                ORDER BY created_at DESC
             """),
             {"user_id": database_user_id},
         ).mappings().all()
@@ -222,20 +388,17 @@ def find_learning_examples(
         item["result"] = json.loads(item.pop("result_json"))
         scored.append((score, item))
 
-    scored.sort(
-        key=lambda item: (bool(item[1].get("corrected")), item[0]),
-        reverse=True,
-    )
+    scored.sort(key=lambda item: item[0], reverse=True)
     return [item for _, item in scored[:limit]]
 
 
 def format_learning_examples(examples: list[dict[str, Any]]) -> str:
-    """Render stored structured examples as few-shot context for the LLM."""
+    """Render verified examples as few-shot context for the LLM."""
     if not examples:
         return ""
 
-    lines = ["\nPRZYKŁADY Z POPRZEDNICH INTERAKCJI:"]
+    lines = ["\nZWERYFIKOWANE PRZYKŁADY Z POPRZEDNICH INTERAKCJI:"]
     for example in examples:
         lines.append(f"UŻYTKOWNIK: {example['message']}")
-        lines.append(f"JSON: {json.dumps(example['result'], ensure_ascii=False)}")
+        lines.append(f"POPRAWNY JSON: {json.dumps(example['result'], ensure_ascii=False)}")
     return "\n".join(lines) + "\n"
