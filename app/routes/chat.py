@@ -26,7 +26,7 @@ WEEKDAYS_PL = (
     "niedziela",
 )
 CONFIRMATION_RE = re.compile(
-    r"^(?:tak|potwierdzam|potwierdź|dodaj|zapisz|jasne|zgadza się|zgadza sie|ok|okej|okay|yes)[.!\s]*$",
+    r"^(?:ok\s+dodaj|okej\s+dodaj|no\s+dodaj|dawaj|dodawaj|tak|potwierdzam|potwierdź|dodaj|zapisz|jasne|zgadza się|zgadza sie|ok|okej|okay|yes)[.!\s]*$",
     re.I,
 )
 THANKS_RE = re.compile(
@@ -286,16 +286,28 @@ def _extract_create_title(message, continuation=False):
     if continuation:
         duration_match = DURATION_MINUTES_RE.search(raw) or DURATION_HOURS_RE.search(raw)
         if duration_match:
-            prefix = raw[: duration_match.start()].strip(" ,.;:-")
-            if prefix and _normalize_text(prefix) not in {
+            ignored = {
                 "niech trwa",
                 "ma trwać",
                 "ma trwac",
                 "trwa",
                 "przez",
                 "czas trwania",
-            }:
+                "proszę",
+                "prosze",
+                "dzięki",
+                "dzieki",
+                "ok",
+                "okej",
+            }
+            prefix = raw[: duration_match.start()].strip(" ,.;:-")
+            if prefix and _normalize_text(prefix) not in ignored:
                 return prefix
+
+            suffix = raw[duration_match.end() :].strip(" ,.;:-")
+            suffix = re.sub(r"^(?:i|to|czyli)\s+", "", suffix, flags=re.I).strip(" ,.;:-")
+            if suffix and _normalize_text(suffix) not in ignored:
+                return suffix
 
     return None
 
