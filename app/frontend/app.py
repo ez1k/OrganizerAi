@@ -37,16 +37,35 @@ def _feedback_candidate(user_message: str, response_data: dict) -> dict | None:
 
 
 def _event_caption(response_data: dict) -> str | None:
+    """Render either a persisted event or the currently collected CREATE slots."""
     status = response_data.get("status")
     event = response_data.get("event")
-    if not isinstance(event, dict) or status not in {"ready_for_confirmation", "confirmed"}:
+    if not isinstance(event, dict) or status not in {
+        "needs_input",
+        "ready_for_confirmation",
+        "confirmed",
+    }:
         return None
-    title = event.get("title", "")
-    start = event.get("start", "")
-    end = event.get("end", "")
-    if not any((title, start, end)):
-        return None
-    return f"📅 {title} · {start} → {end}"
+
+    title = str(event.get("title") or "").strip()
+    start = str(event.get("start") or "").strip()
+    end = str(event.get("end") or "").strip()
+
+    if start or end:
+        parts = [value for value in (title, start, end) if value]
+        return "📅 " + " · ".join(parts) if parts else None
+
+    parts = []
+    if title:
+        parts.append(title)
+    if event.get("date_hint"):
+        parts.append(str(event["date_hint"]))
+    if event.get("time_hint"):
+        parts.append(str(event["time_hint"]))
+    if event.get("duration_minutes"):
+        parts.append(f"{event['duration_minutes']} min")
+
+    return "📅 " + " · ".join(parts) if parts else None
 
 
 def _set_notice(kind: str, message: str) -> None:
@@ -75,7 +94,10 @@ def _accept_feedback(candidate: dict) -> None:
                 "corrected_result": candidate["result"],
             },
         )
-        _set_notice("success", "Poprawka została zweryfikowana i trafiła do przykładów używanych przez model.")
+        _set_notice(
+            "success",
+            "Poprawka została zweryfikowana i trafiła do przykładów używanych przez model.",
+        )
     else:
         _post_json(
             "/feedback",
@@ -86,7 +108,10 @@ def _accept_feedback(candidate: dict) -> None:
                 "accepted": True,
             },
         )
-        _set_notice("success", "Interpretacja została zapisana jako zweryfikowany przykład.")
+        _set_notice(
+            "success",
+            "Interpretacja została zapisana jako zweryfikowany przykład.",
+        )
 
     st.session_state.feedback_candidate = None
     st.session_state.pending_feedback_id = None
@@ -97,7 +122,10 @@ def _reject_feedback(candidate: dict) -> None:
     if correction_feedback_id:
         st.session_state.pending_feedback_id = correction_feedback_id
         st.session_state.feedback_candidate = None
-        _set_notice("warning", "Napisz kolejną poprawkę w czacie. Zapiszemy ją dopiero po Twoim potwierdzeniu.")
+        _set_notice(
+            "warning",
+            "Napisz kolejną poprawkę w czacie. Zapiszemy ją dopiero po Twoim potwierdzeniu.",
+        )
         return
 
     data = _post_json(
@@ -111,7 +139,10 @@ def _reject_feedback(candidate: dict) -> None:
     )
     st.session_state.pending_feedback_id = data["feedback_id"]
     st.session_state.feedback_candidate = None
-    _set_notice("warning", "Oznaczyłem interpretację jako błędną. Napisz teraz w czacie, jak powinienem to rozumieć.")
+    _set_notice(
+        "warning",
+        "Oznaczyłem interpretację jako błędną. Napisz teraz w czacie, jak powinienem to rozumieć.",
+    )
 
 
 def _render_feedback_controls() -> None:
@@ -126,14 +157,22 @@ def _render_feedback_controls() -> None:
 
     yes_col, no_col = st.columns(2)
     with yes_col:
-        if st.button("👍 Tak, poprawnie", use_container_width=True, key="feedback_accept"):
+        if st.button(
+            "👍 Tak, poprawnie",
+            use_container_width=True,
+            key="feedback_accept",
+        ):
             try:
                 _accept_feedback(candidate)
                 st.rerun()
             except requests.RequestException as exc:
                 st.error(f"Nie udało się zapisać feedbacku: {exc}")
     with no_col:
-        if st.button("👎 Nie, poprawię", use_container_width=True, key="feedback_reject"):
+        if st.button(
+            "👎 Nie, poprawię",
+            use_container_width=True,
+            key="feedback_reject",
+        ):
             try:
                 _reject_feedback(candidate)
                 st.rerun()
