@@ -2,12 +2,14 @@
 
 import logging
 
+import requests
 from fastapi import APIRouter, HTTPException, Query
 
 from app.schemas import (
     EventReflectionRequest,
     MotivationReminderRequest,
     MotivationReminderStatusRequest,
+    ReflectionAnalysisRequest,
 )
 from app.services.event_reflection_service import (
     list_due_motivation_reminders,
@@ -16,6 +18,7 @@ from app.services.event_reflection_service import (
     schedule_motivation_reminder,
     update_motivation_reminder_status,
 )
+from app.services.reflection_nlp_service import analyze_event_reflection
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["reflections"])
@@ -53,6 +56,25 @@ def get_reflections(
     except Exception as exc:
         logger.exception("Failed to list event reflections for user_id=%s", user_id)
         raise HTTPException(status_code=500, detail="Nie udało się pobrać ocen wydarzeń.") from exc
+
+
+@router.post("/reflections/analyze")
+def analyze_reflection(request: ReflectionAnalysisRequest):
+    """Analyze natural-language event feedback without persisting or scheduling anything."""
+    try:
+        analysis = analyze_event_reflection(request.feedback_text)
+        return {"status": "analyzed", "analysis": analysis}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except requests.RequestException as exc:
+        logger.exception("Failed to reach local reflection NLP model")
+        raise HTTPException(
+            status_code=503,
+            detail="Nie udało się połączyć z lokalnym modelem analizującym ocenę wydarzenia.",
+        ) from exc
+    except Exception as exc:
+        logger.exception("Failed to analyze event reflection")
+        raise HTTPException(status_code=500, detail="Nie udało się przeanalizować oceny wydarzenia.") from exc
 
 
 @router.post("/reflections/{reflection_id}/reminders")
