@@ -51,7 +51,7 @@ DATY I DNI TYGODNIA:
 15. Dni tygodnia zwracaj w kanonicznej formie mianownika: poniedziałek, wtorek, środa, czwartek, piątek, sobota, niedziela. Np. "w sobotę" -> date_hint="sobota".
 
 ROZPOZNAWANIE INTENCJI:
-16. "dodaj", "zaplanuj", "umów" oznaczają CREATE. Potoczne sformułowania typu "wrzuć mi do kalendarza" także mogą oznaczać CREATE, jeśli chodzi o planowanie wydarzenia.
+16. "dodaj", "zaplanuj", "umów" oznaczają CREATE. Potoczne sformułowania typu "wrzuć mi" lub "wpisz mi" także mogą oznaczać CREATE, jeśli chodzi o planowanie wydarzenia.
 17. "sprawdź", "co mam", "pokaż", "jak wygląda mój kalendarz", "czy mam jutro coś z ..." oznaczają SEARCH kalendarza.
 18. "usuń", "skasuj", "wywal" oznaczają DELETE. Potoczny DELETE nadal MUSI zwrócić obiekt search z kryteriami, jeśli są podane.
 19. Pytania o repertuar, kino, film, pogodę, wiadomości, kursy walut itp. są EXTERNAL_SEARCH, chyba że użytkownik wyraźnie pyta o własne wydarzenie kalendarza o takiej nazwie.
@@ -92,10 +92,12 @@ Pola event/search mogą być częściowe. Pomijaj pola, których wartości nie z
 """
 
 
+# These examples are intentionally different from the frozen NLP evaluation set.
+# They teach semantic patterns without leaking exact benchmark utterances.
 STATIC_FEW_SHOT_MESSAGES = [
     {
         "role": "user",
-        "content": "zaplanuj mi jutro o 19 dwie godziny nauki do egzaminu",
+        "content": "wpisz mi na jutro o 8 dwie godziny pisania pracy",
     },
     {
         "role": "assistant",
@@ -105,9 +107,9 @@ STATIC_FEW_SHOT_MESSAGES = [
                 "status": "ready_for_confirmation",
                 "operation": "create",
                 "event": {
-                    "title": "nauka do egzaminu",
+                    "title": "pisanie pracy",
                     "date_hint": "jutro",
-                    "time_hint": "19:00",
+                    "time_hint": "08:00",
                     "duration_minutes": 120,
                 },
             },
@@ -116,18 +118,18 @@ STATIC_FEW_SHOT_MESSAGES = [
     },
     {
         "role": "user",
-        "content": "zaplanuj trening w piątek na 90 minut",
+        "content": "zaplanuj bieganie w środę na 90 minut",
     },
     {
         "role": "assistant",
         "content": json.dumps(
             {
-                "reply": "O której godzinie ma rozpocząć się trening?",
+                "reply": "O której godzinie ma rozpocząć się bieganie?",
                 "status": "needs_input",
                 "operation": "create",
                 "event": {
-                    "title": "trening",
-                    "date_hint": "piątek",
+                    "title": "bieganie",
+                    "date_hint": "środa",
                     "duration_minutes": 90,
                 },
             },
@@ -136,17 +138,17 @@ STATIC_FEW_SHOT_MESSAGES = [
     },
     {
         "role": "user",
-        "content": "chcę jutro wieczorem pouczyć się przez godzinę",
+        "content": "jutro wieczorem chcę przez godzinę robić porządki",
     },
     {
         "role": "assistant",
         "content": json.dumps(
             {
-                "reply": "O której dokładnie godzinie ma rozpocząć się nauka?",
+                "reply": "O której dokładnie godzinie mają rozpocząć się porządki?",
                 "status": "needs_input",
                 "operation": "create",
                 "event": {
-                    "title": "nauka",
+                    "title": "porządki",
                     "date_hint": "jutro",
                     "duration_minutes": 60,
                 },
@@ -156,18 +158,18 @@ STATIC_FEW_SHOT_MESSAGES = [
     },
     {
         "role": "user",
-        "content": "dodaj godzinę czytania o 20",
+        "content": "dodaj godzinę medytacji o 21",
     },
     {
         "role": "assistant",
         "content": json.dumps(
             {
-                "reply": "Na jaki dzień mam zaplanować czytanie?",
+                "reply": "Na jaki dzień mam zaplanować medytację?",
                 "status": "needs_input",
                 "operation": "create",
                 "event": {
-                    "title": "czytanie",
-                    "time_hint": "20:00",
+                    "title": "medytacja",
+                    "time_hint": "21:00",
                     "duration_minutes": 60,
                 },
             },
@@ -176,39 +178,39 @@ STATIC_FEW_SHOT_MESSAGES = [
     },
     {
         "role": "user",
-        "content": "czy mam jutro coś z dentystą?",
+        "content": "czy w piątek mam wizytę u lekarza?",
     },
     {
         "role": "assistant",
         "content": json.dumps(
             {
-                "reply": "Sprawdzę kalendarz dla jutra i dentysty.",
+                "reply": "Sprawdzę kalendarz dla piątku i wizyty u lekarza.",
                 "status": "calendar_search",
                 "operation": "search",
-                "search": {"title": "dentysta", "date_hint": "jutro"},
+                "search": {"title": "lekarz", "date_hint": "piątek"},
             },
             ensure_ascii=False,
         ),
     },
     {
         "role": "user",
-        "content": "wywal mi trening z poniedziałku",
+        "content": "skasuj mi zebranie ze środy",
     },
     {
         "role": "assistant",
         "content": json.dumps(
             {
-                "reply": "Wyszukuję trening z poniedziałku do potwierdzenia usunięcia.",
+                "reply": "Wyszukuję zebranie ze środy do potwierdzenia usunięcia.",
                 "status": "calendar_delete_confirmation",
                 "operation": "delete",
-                "search": {"title": "trening", "date_hint": "poniedziałek"},
+                "search": {"title": "zebranie", "date_hint": "środa"},
             },
             ensure_ascii=False,
         ),
     },
     {
         "role": "user",
-        "content": "co grają dziś wieczorem w kinie?",
+        "content": "jaki film leci dziś wieczorem w telewizji?",
     },
     {
         "role": "assistant",
@@ -223,15 +225,30 @@ STATIC_FEW_SHOT_MESSAGES = [
     },
     {
         "role": "user",
-        "content": "hej, co tam?",
+        "content": "cześć, jak leci?",
     },
     {
         "role": "assistant",
         "content": json.dumps(
             {
-                "reply": "Hej! W czym mogę pomóc?",
+                "reply": "Cześć! W czym mogę pomóc?",
                 "status": "chat",
                 "operation": "chat",
+            },
+            ensure_ascii=False,
+        ),
+    },
+    {
+        "role": "user",
+        "content": "nieważne, anuluj to",
+    },
+    {
+        "role": "assistant",
+        "content": json.dumps(
+            {
+                "reply": "Anulowano bieżącą operację.",
+                "status": "cancelled",
+                "operation": "cancelled",
             },
             ensure_ascii=False,
         ),
