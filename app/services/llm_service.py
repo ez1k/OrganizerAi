@@ -15,89 +15,72 @@ MODEL = "mistral"
 
 SYSTEM_PROMPT = """
 Jesteś modułem rozumienia języka dla aplikacji do planowania aktywności.
-NIE wykonujesz operacji na kalendarzu i NIE wymyślasz danych, których użytkownik nie podał.
-Backend wykonuje operacje na podstawie Twojego JSON.
+Zwracasz wyłącznie JSON. Nie wykonujesz operacji na kalendarzu i nie wymyślasz danych.
+Backend osobno waliduje dane i wykonuje Google Calendar.
 
-Możliwe operacje:
-- create: dodaj nowe wydarzenie
-- search: sprawdź/pokaż wydarzenia z kalendarza użytkownika
-- delete: usuń istniejące wydarzenie
-- external_search: pytanie o informacje spoza kalendarza
-- chat: zwykła rozmowa
-- cancelled: anulowanie bieżącej operacji
+INTENCJA — najpierw wybierz dokładnie jedną operację:
+- create: dodaj, zaplanuj, umów, wpisz/wrzuć aktywność do kalendarza,
+- search: sprawdź, pokaż, co mam, czy mam coś w swoim kalendarzu,
+- delete: usuń, skasuj, wywal wydarzenie z kalendarza,
+- external_search: pytanie o pogodę, kino, film, repertuar, wiadomości lub inne informacje spoza kalendarza,
+- chat: zwykła rozmowa/small-talk, np. „hej”, „co tam?”, „jak leci?”,
+- cancelled: wyraźne anulowanie aktywnej operacji, np. „nieważne”, „anuluj”, „odpuść”.
 
-Dla CREATE dane wydarzenia: title, date_hint, time_hint, duration_minutes, description.
-Dla SEARCH/DELETE użyj search: title, date_hint, time_hint, range_type, range_days.
+STRUKTURA:
+- CREATE: event = title, date_hint, time_hint, duration_minutes, description.
+- SEARCH/DELETE: search = title, date_hint, time_hint, range_type, range_days.
+- Dla SEARCH/DELETE nie używaj event do kryteriów wyszukiwania.
+- Przy DELETE nigdy nie wymyślaj event_id ani selected_event_id.
 
-NAJWAŻNIEJSZE ZASADY BEZPIECZEŃSTWA:
-1. Wykorzystuj tylko informacje z bieżącej wiadomości, historii i AKTUALNEGO STANU. Nie zgaduj brakujących slotów.
-2. Nigdy nie zakładaj domyślnie "dzisiaj", żadnej godziny, żadnego czasu trwania ani lokalizacji.
-3. Określenia pory dnia takie jak "rano", "przed południem", "po południu", "wieczorem", "wieczorem po pracy" NIE są konkretną godziną. Jeśli CREATE wymaga dokładnej godziny, time_hint ma być pominięte/null, a status ma być needs_input.
-4. CREATE może mieć status ready_for_confirmation WYŁĄCZNIE, gdy znane są wszystkie cztery wymagane sloty: title, date_hint, time_hint i duration_minutes. Jeśli brakuje choć jednego z nich, status = needs_input.
-5. DELETE bez wystarczających kryteriów celu, np. "usuń mi to wydarzenie" bez kontekstu, ma status needs_input. Nie wymyślaj event_id ani selected_event_id.
-6. SEARCH i EXTERNAL_SEARCH nie wymagają potwierdzenia. Dla rozpoznanego SEARCH użyj status=calendar_search. Dla pytania spoza kalendarza użyj status=external_search.
-7. Jeśli użytkownik wyraźnie anuluje aktywną operację, np. "nieważne", "odpuść", "anuluj", "zrezygnuj", zwróć status=cancelled i operation=cancelled.
+ZASADY SLOTÓW:
+1. Używaj tylko informacji z bieżącej wiadomości, historii i AKTUALNEGO STANU. Brakującego slotu nie zgaduj.
+2. Nigdy nie zakładaj domyślnie „dzisiaj”, konkretnej godziny ani czasu trwania.
+3. „18”, „o 18”, „18:00” oznaczają time_hint. Normalizuj konkretną godzinę do HH:MM.
+4. „90 minut”=90, „godzinę”=60, „pół godziny”=30, „półtorej godziny”=90, „dwie godziny”=120.
+5. „o 12 półtorej godziny” oznacza time_hint="12:00" i duration_minutes=90 — nie 12:30.
+6. „rano”, „po południu”, „wieczorem” nie są dokładną godziną. Nie zapisuj ich jako time_hint dla CREATE wymagającego precyzyjnej godziny.
+7. Zachowuj daty podane przez użytkownika. Jeśli daty nie ma, nie dodawaj „dziś”.
+8. Dni tygodnia zwracaj kanonicznie: poniedziałek, wtorek, środa, czwartek, piątek, sobota, niedziela.
+9. Wyodrębnij nazwę aktywności jako title; np. „pouczyć się” oznacza tytuł związany z nauką.
 
-CZAS I CZAS TRWANIA:
-8. "18", "o 18", "18:00" oznaczają time_hint, NIGDY duration_minutes.
-9. "18 min", "60 min", "90 minut" oznaczają duration_minutes odpowiednio 18, 60, 90.
-10. Rozumiej naturalne długości czasu: "kwadrans"=15, "pół godziny"=30, "godzinę"/"jedną godzinę"=60, "półtorej godziny"=90, "dwie godziny"=120, "2 godziny"=120, "1,5 godziny"=90.
-11. Konstrukcja "o 12 półtorej godziny siłowni" oznacza time_hint="12:00" i duration_minutes=90. NIE wolno zmieniać godziny na 12:30.
-12. Jeśli liczba nie ma jednostki i opisuje porę dnia, traktuj ją jako time_hint.
-13. Normalizuj konkretne godziny do HH:MM, np. "o 7" -> "07:00".
+STATUS:
+- create: jeśli title + date_hint + time_hint + duration_minutes są znane -> ready_for_confirmation; w przeciwnym razie -> needs_input,
+- search -> calendar_search,
+- delete: jeśli są wystarczające kryteria celu -> calendar_delete_confirmation; bez celu/kontekstu -> needs_input,
+- external_search -> external_search,
+- chat -> chat,
+- cancelled -> cancelled.
 
-DATY I DNI TYGODNIA:
-14. Zachowuj względne daty podane przez użytkownika: "dziś", "jutro", "pojutrze". Nie zamieniaj brakującej daty na "dziś".
-15. Dni tygodnia zwracaj w kanonicznej formie mianownika: poniedziałek, wtorek, środa, czwartek, piątek, sobota, niedziela. Np. "w sobotę" -> date_hint="sobota".
+Jeśli użytkownik zmienia temat mimo istniejącego draftu, klasyfikuj nową wiadomość zgodnie z jej własną intencją.
+Jeśli aktualny draft jest CREATE i użytkownik podaje korektę typu „jednak o 18:30”, zachowaj pozostałe sloty z draftu i zmień tylko podaną wartość.
+Jeśli użytkownik anuluje aktywny draft, zwróć operation="cancelled" i status="cancelled".
+W polu reply nie twierdź, że operacja została już wykonana.
 
-ROZPOZNAWANIE INTENCJI:
-16. "dodaj", "zaplanuj", "umów" oznaczają CREATE. Potoczne sformułowania typu "wrzuć mi" lub "wpisz mi" także mogą oznaczać CREATE, jeśli chodzi o planowanie wydarzenia.
-17. "sprawdź", "co mam", "pokaż", "jak wygląda mój kalendarz", "czy mam jutro coś z ..." oznaczają SEARCH kalendarza.
-18. "usuń", "skasuj", "wywal" oznaczają DELETE. Potoczny DELETE nadal MUSI zwrócić obiekt search z kryteriami, jeśli są podane.
-19. Pytania o repertuar, kino, film, pogodę, wiadomości, kursy walut itp. są EXTERNAL_SEARCH, chyba że użytkownik wyraźnie pyta o własne wydarzenie kalendarza o takiej nazwie.
-20. Zwykły small-talk typu "hej", "co tam?", "jak leci?" to CHAT. Nie interpretuj "co tam?" jako "co mam w kalendarzu?".
-21. Jeśli użytkownik pyta o coś niezależnego od poprzedniego draftu, nie kontynuuj starego draftu.
-22. "ten", "ten drugi", "poprzedni", "go" mogą odnosić się do poprzednich wyników; backend przechowuje kontekst. Nie wymyślaj identyfikatorów.
-
-TYTUŁ I STRUKTURA:
-23. Dla CREATE wyodrębnij z wypowiedzi nazwę aktywności jako title, np. "dwie godziny nauki do egzaminu" -> title zawierający "nauka", "pouczyć się" -> title związany z nauką, "trening w piątek" -> title="trening".
-24. Dla SEARCH/DELETE tytuł trafia do search.title, nie do event.title.
-25. Przy DELETE nie wymyślaj event_id. Zwróć wyłącznie kryteria search i odpowiedni status.
-
-STATUSY:
-26. create + kompletne 4 sloty -> ready_for_confirmation.
-27. create + brak co najmniej jednego z 4 slotów -> needs_input.
-28. search -> calendar_search.
-29. delete + podane kryteria celu -> calendar_delete_confirmation; delete bez wystarczających kryteriów -> needs_input.
-30. external_search -> external_search.
-31. chat -> chat.
-32. cancelled -> cancelled.
-
-POZOSTAŁE ZASADY:
-33. Odpowiedź po polsku i krótka.
-34. Jeśli dostajesz ZWERYFIKOWANE PRZYKŁADY, traktuj je jako wzorce semantyczne podobnych wypowiedzi. Nie kopiuj z nich dat, godzin, tytułów ani innych wartości, których nie ma w bieżącej wiadomości lub aktualnym stanie.
-35. W polu reply NIGDY nie twierdź, że wydarzenie zostało dodane, zapisane, usunięte ani że właśnie je dodajesz. O wykonaniu operacji informuje wyłącznie backend po odpowiedzi Google Calendar.
-36. Jeśli użytkownik nie podał czasu trwania CREATE, duration_minutes ma być pominięte lub null. Nigdy nie przyjmuj domyślnie 60 minut.
-37. ZWRÓĆ WYŁĄCZNIE poprawny JSON.
+PRZED ZWRÓCENIEM JSON SPRAWDŹ:
+1. Czy operation odpowiada czasownikowi i znaczeniu bieżącej wiadomości?
+2. Czy każdy zwrócony slot pochodzi z wiadomości, historii albo AKTUALNEGO STANU?
+3. Dla CREATE: czy dokładnie cztery wymagane sloty są znane? Tak -> ready_for_confirmation, nie -> needs_input.
+4. Czy zawsze zwróciłeś operation i status?
+5. Czy odpowiedź zawiera wyłącznie poprawny JSON bez tekstu poza JSON?
 
 FORMAT:
 {
-  "reply": "krótka odpowiedź bez twierdzenia, że operacja została wykonana",
+  "reply": "krótka odpowiedź po polsku",
   "status": "needs_input | ready_for_confirmation | calendar_search | calendar_delete_confirmation | external_search | cancelled | chat",
   "operation": "create | search | delete | external_search | chat | cancelled",
   "event": {"title": "string", "date_hint": "string", "time_hint": "string", "duration_minutes": null, "description": "string"},
   "search": {"title": "string", "date_hint": "string", "time_hint": "string", "range_type": "next_days | this_week", "range_days": 14}
 }
-Pola event/search mogą być częściowe. Pomijaj pola, których wartości nie znasz.
+Pola event/search mogą być częściowe. Pomijaj wartości, których nie znasz.
 """
 
 
-# These examples are intentionally different from the frozen NLP evaluation set.
-# They teach semantic patterns without leaking exact benchmark utterances.
+# Minimal v2.1 few-shot set. Examples are intentionally different from the
+# frozen NLP evaluation utterances to avoid benchmark leakage.
 STATIC_FEW_SHOT_MESSAGES = [
     {
         "role": "user",
-        "content": "wpisz mi na jutro o 8 dwie godziny pisania pracy",
+        "content": "wpisz mi jutro o 8 półtorej godziny pisania pracy",
     },
     {
         "role": "assistant",
@@ -110,26 +93,6 @@ STATIC_FEW_SHOT_MESSAGES = [
                     "title": "pisanie pracy",
                     "date_hint": "jutro",
                     "time_hint": "08:00",
-                    "duration_minutes": 120,
-                },
-            },
-            ensure_ascii=False,
-        ),
-    },
-    {
-        "role": "user",
-        "content": "zaplanuj bieganie w środę na 90 minut",
-    },
-    {
-        "role": "assistant",
-        "content": json.dumps(
-            {
-                "reply": "O której godzinie ma rozpocząć się bieganie?",
-                "status": "needs_input",
-                "operation": "create",
-                "event": {
-                    "title": "bieganie",
-                    "date_hint": "środa",
                     "duration_minutes": 90,
                 },
             },
@@ -176,83 +139,6 @@ STATIC_FEW_SHOT_MESSAGES = [
             ensure_ascii=False,
         ),
     },
-    {
-        "role": "user",
-        "content": "czy w piątek mam wizytę u lekarza?",
-    },
-    {
-        "role": "assistant",
-        "content": json.dumps(
-            {
-                "reply": "Sprawdzę kalendarz dla piątku i wizyty u lekarza.",
-                "status": "calendar_search",
-                "operation": "search",
-                "search": {"title": "lekarz", "date_hint": "piątek"},
-            },
-            ensure_ascii=False,
-        ),
-    },
-    {
-        "role": "user",
-        "content": "skasuj mi zebranie ze środy",
-    },
-    {
-        "role": "assistant",
-        "content": json.dumps(
-            {
-                "reply": "Wyszukuję zebranie ze środy do potwierdzenia usunięcia.",
-                "status": "calendar_delete_confirmation",
-                "operation": "delete",
-                "search": {"title": "zebranie", "date_hint": "środa"},
-            },
-            ensure_ascii=False,
-        ),
-    },
-    {
-        "role": "user",
-        "content": "jaki film leci dziś wieczorem w telewizji?",
-    },
-    {
-        "role": "assistant",
-        "content": json.dumps(
-            {
-                "reply": "To pytanie dotyczy informacji spoza kalendarza.",
-                "status": "external_search",
-                "operation": "external_search",
-            },
-            ensure_ascii=False,
-        ),
-    },
-    {
-        "role": "user",
-        "content": "cześć, jak leci?",
-    },
-    {
-        "role": "assistant",
-        "content": json.dumps(
-            {
-                "reply": "Cześć! W czym mogę pomóc?",
-                "status": "chat",
-                "operation": "chat",
-            },
-            ensure_ascii=False,
-        ),
-    },
-    {
-        "role": "user",
-        "content": "nieważne, anuluj to",
-    },
-    {
-        "role": "assistant",
-        "content": json.dumps(
-            {
-                "reply": "Anulowano bieżącą operację.",
-                "status": "cancelled",
-                "operation": "cancelled",
-            },
-            ensure_ascii=False,
-        ),
-    },
 ]
 
 
@@ -264,9 +150,9 @@ def ask_llm(
 ) -> dict:
     """Ask Ollama for a structured interpretation of the current user message.
 
-    Only explicitly verified SQL examples are read here as few-shot context.
-    Writes are handled by the backend/feedback flow so raw model output cannot
-    silently become trusted training context.
+    Static few-shots teach only the hardest slot/safety patterns. Explicitly
+    verified SQL examples are still retrieved as personalized semantic context.
+    Raw model output never becomes trusted learning context automatically.
     """
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
     messages.extend(STATIC_FEW_SHOT_MESSAGES)
