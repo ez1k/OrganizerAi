@@ -127,10 +127,44 @@ class CreateDialogControlTests(unittest.TestCase):
             operation="search",
             status="calendar_search",
             latency_ms=123,
+            llm_latency_ms=0,
+            calendar_latency_ms=0,
+            backend_latency_ms=123,
+            llm_calls=0,
+            calendar_calls=0,
             clarification_required=False,
             had_draft=False,
             message_length=len("jakie mam plany?"),
         )
+
+    def test_metric_splits_total_latency_between_components(self):
+        delegated_result = {
+            "status": "calendar_search",
+            "message": "Brak wydarzeń.",
+            "event": {"operation": "search", "search": {}, "matches": []},
+        }
+        components = {
+            "llm_latency_ms": 3000,
+            "calendar_latency_ms": 500,
+            "llm_calls": 1,
+            "calendar_calls": 1,
+        }
+
+        with (
+            patch.object(chat_flow.chat, "chat_endpoint", return_value=delegated_result),
+            patch.object(chat_flow, "perf_counter", side_effect=[10.0, 14.0]),
+            patch.object(chat_flow, "snapshot_turn_timing", return_value=components),
+            patch.object(chat_flow, "save_chat_turn_metric") as save_metric,
+        ):
+            chat_flow.chat_endpoint(self._request("jakie mam plany?"))
+
+        kwargs = save_metric.call_args.kwargs
+        self.assertEqual(kwargs["latency_ms"], 4000)
+        self.assertEqual(kwargs["llm_latency_ms"], 3000)
+        self.assertEqual(kwargs["calendar_latency_ms"], 500)
+        self.assertEqual(kwargs["backend_latency_ms"], 500)
+        self.assertEqual(kwargs["llm_calls"], 1)
+        self.assertEqual(kwargs["calendar_calls"], 1)
 
     def test_needs_input_metric_marks_clarification(self):
         delegated_result = {
