@@ -22,7 +22,9 @@ GROUP BY operation
 ORDER BY operation;
 GO
 
--- 2. Przebieg sesji: liczba turnów, doprecyzowań i wynik końcowy.
+-- 2. Przebieg sesji: liczba turnów, doprecyzowań i sposób zakończenia.
+-- reached_action_success oznacza wykonaną akcję / zakończone wyszukiwanie.
+-- resolved_state obejmuje także świadome anulowanie przez użytkownika.
 SELECT
     session_id,
     MIN(created_at) AS started_at_utc,
@@ -30,7 +32,10 @@ SELECT
     COUNT(*) AS turns,
     SUM(CASE WHEN clarification_required = 1 THEN 1 ELSE 0 END) AS clarification_turns,
     MAX(CASE WHEN status IN ('confirmed', 'deleted', 'calendar_search') THEN 1 ELSE 0 END)
-        AS reached_success_state,
+        AS reached_action_success,
+    MAX(CASE WHEN status IN ('confirmed', 'deleted', 'calendar_search', 'cancelled') THEN 1 ELSE 0 END)
+        AS resolved_state,
+    MAX(CASE WHEN status = 'cancelled' THEN 1 ELSE 0 END) AS cancelled_by_user,
     MAX(CASE WHEN status = 'error' THEN 1 ELSE 0 END) AS had_error
 FROM dbo.chat_turn_metrics
 GROUP BY session_id
@@ -38,23 +43,34 @@ ORDER BY started_at_utc DESC;
 GO
 
 -- 3. Jakość interpretacji z istniejącego feedbacku.
--- accepted_first_pass: użytkownik zaakceptował pierwotny wynik bez korekty.
--- corrected_after_rejection: wynik został później poprawiony.
-SELECT
-    COUNT(*) AS feedback_rows,
-    SUM(CASE
-        WHEN corrected_result_json IS NOT NULL
-         AND corrected_result_json = model_result_json THEN 1 ELSE 0 END) AS accepted_first_pass,
-    SUM(CASE
-        WHEN corrected_result_json IS NOT NULL
-         AND corrected_result_json <> model_result_json THEN 1 ELSE 0 END) AS corrected_after_rejection,
-    SUM(CASE WHEN corrected_result_json IS NULL THEN 1 ELSE 0 END) AS awaiting_correction,
-    CAST(
-        100.0 * SUM(CASE
+-- Wskaźnik first_pass_acceptance_resolved_pct ma w mianowniku tylko feedback
+-- rozstrzygnięty przez użytkownika. Oczekujące poprawki są raportowane osobno.
+WITH feedback AS (
+    SELECT
+        COUNT(*) AS feedback_rows,
+        SUM(CASE WHEN corrected_result_json IS NOT NULL THEN 1 ELSE 0 END) AS resolved_feedback,
+        SUM(CASE
             WHEN corrected_result_json IS NOT NULL
-             AND corrected_result_json = model_result_json THEN 1 ELSE 0 END)
-        / NULLIF(COUNT(*), 0)
+             AND corrected_result_json = model_result_json THEN 1 ELSE 0 END) AS accepted_first_pass,
+        SUM(CASE
+            WHEN corrected_result_json IS NOT NULL
+             AND corrected_result_json <> model_result_json THEN 1 ELSE 0 END) AS corrected_after_rejection,
+        SUM(CASE WHEN corrected_result_json IS NULL THEN 1 ELSE 0 END) AS awaiting_correction
+    FROM dbo.conversation_feedback
+)
+SELECT
+    feedback_rows,
+    resolved_feedback,
+    accepted_first_pass,
+    corrected_after_rejection,
+    awaiting_correction,
+    CAST(
+        100.0 * accepted_first_pass / NULLIF(resolved_feedback, 0)
         AS DECIMAL(6,2)
-    ) AS first_pass_acceptance_pct
-FROM dbo.conversation_feedback;
+    ) AS first_pass_acceptance_resolved_pct,
+    CAST(
+        100.0 * resolved_feedback / NULLIF(feedback_rows, 0)
+        AS DECIMAL(6,2)
+    ) AS feedback_resolution_pct
+FROM feedback;
 GO
