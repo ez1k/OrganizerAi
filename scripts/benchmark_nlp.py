@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import json
 import statistics
+import sys
 import time
 import unicodedata
 from collections import defaultdict
@@ -17,15 +18,20 @@ from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
 
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
 from app.services.llm_service import ask_llm
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_DATASET = PROJECT_ROOT / "benchmarks" / "nlp_quality_v1.json"
 DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "benchmark_results"
+POLISH_TRANSLATION = str.maketrans({"ł": "l"})
 
 
 def _normalize(value) -> str:
     text = " ".join(str(value or "").strip().casefold().split())
+    text = text.translate(POLISH_TRANSLATION)
     decomposed = unicodedata.normalize("NFKD", text)
     return "".join(char for char in decomposed if not unicodedata.combining(char))
 
