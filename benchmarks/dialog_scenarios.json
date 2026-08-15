@@ -245,7 +245,7 @@
     "turns": [
       {
         "message": "usuń wydarzenie benchmark-nieistniejace-7f3a jutro",
-        "expected_status": "chat"
+        "expected_status": "calendar_delete_not_found"
       }
     ]
   }
