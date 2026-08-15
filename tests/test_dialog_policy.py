@@ -58,6 +58,55 @@ class DialogPolicyTests(unittest.TestCase):
         )
         self.assertEqual(result["status"], "needs_input")
 
+    def test_hallucinated_duration_is_removed_without_message_evidence(self):
+        result = apply_dialog_policy(
+            "dodaj spotkanie z Anią jutro o 18",
+            {
+                "operation": "create",
+                "event": {
+                    "title": "spotkanie z Anią",
+                    "date_hint": "jutro",
+                    "time_hint": "18:00",
+                    "duration_minutes": 60,
+                },
+            },
+        )
+        self.assertNotIn("duration_minutes", result["event"])
+        self.assertEqual(result["status"], "needs_input")
+
+    def test_hallucinated_midnight_is_removed_without_message_evidence(self):
+        result = apply_dialog_policy(
+            "zaplanuj trening w piątek na 90 minut",
+            {
+                "operation": "create",
+                "event": {
+                    "title": "trening",
+                    "date_hint": "piątek",
+                    "time_hint": "00:00",
+                    "duration_minutes": 90,
+                },
+            },
+        )
+        self.assertNotIn("time_hint", result["event"])
+        self.assertEqual(result["event"]["duration_minutes"], 90)
+        self.assertEqual(result["status"], "needs_input")
+
+    def test_grounding_can_recover_natural_duration_from_message(self):
+        result = apply_dialog_policy(
+            "wrzuć mi jutro o 12 półtorej godziny siłowni",
+            {
+                "operation": "create",
+                "event": {
+                    "title": "siłownia",
+                    "date_hint": "jutro",
+                    "time_hint": "12:30",
+                },
+            },
+        )
+        self.assertEqual(result["event"]["time_hint"], "12:00")
+        self.assertEqual(result["event"]["duration_minutes"], 90)
+        self.assertEqual(result["status"], "ready_for_confirmation")
+
     def test_create_correction_uses_existing_state_for_completeness(self):
         state = {
             "operation": "create",
@@ -72,6 +121,8 @@ class DialogPolicyTests(unittest.TestCase):
             current_state=state,
         )
         self.assertEqual(result["status"], "ready_for_confirmation")
+        self.assertEqual(result["event"]["time_hint"], "18:30")
+        self.assertEqual(result["event"]["duration_minutes"], 90)
 
     def test_vague_time_is_removed_and_create_needs_input(self):
         result = apply_dialog_policy(
@@ -87,6 +138,7 @@ class DialogPolicyTests(unittest.TestCase):
             },
         )
         self.assertNotIn("time_hint", result["event"])
+        self.assertEqual(result["event"]["duration_minutes"], 60)
         self.assertEqual(result["status"], "needs_input")
 
     def test_weekday_inflection_is_canonicalized(self):
@@ -107,10 +159,15 @@ class DialogPolicyTests(unittest.TestCase):
     def test_delete_without_target_needs_input(self):
         result = apply_dialog_policy(
             "usuń mi to wydarzenie",
-            {"operation": "delete", "status": "calendar_delete_confirmation"},
+            {
+                "operation": "delete",
+                "status": "calendar_delete_confirmation",
+                "search": {"title": "wydarzenie"},
+            },
         )
         self.assertEqual(result["operation"], "delete")
         self.assertEqual(result["status"], "needs_input")
+        self.assertNotIn("search", result)
 
     def test_delete_with_search_criteria_can_request_confirmation(self):
         result = apply_dialog_policy(
@@ -121,6 +178,17 @@ class DialogPolicyTests(unittest.TestCase):
             },
         )
         self.assertEqual(result["status"], "calendar_delete_confirmation")
+        self.assertEqual(result["search"]["title"], "trening")
+        self.assertEqual(result["search"]["date_hint"], "poniedziałek")
+
+    def test_colloquial_delete_recovers_grounded_search_when_model_omits_it(self):
+        result = apply_dialog_policy(
+            "wywal mi trening z poniedziałku",
+            {"operation": "delete"},
+        )
+        self.assertEqual(result["status"], "calendar_delete_confirmation")
+        self.assertEqual(result["search"]["title"], "trening")
+        self.assertEqual(result["search"]["date_hint"], "poniedziałek")
 
     def test_delete_anaphora_can_use_existing_matches(self):
         result = apply_dialog_policy(
