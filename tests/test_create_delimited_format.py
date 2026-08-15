@@ -23,18 +23,19 @@ class CreateDelimitedFormatTests(unittest.TestCase):
         )
 
         for message in messages:
-            with self.subTest(message=message), (
-                patch.object(chat_flow.chat, "chat_endpoint") as delegated,
-                patch.object(chat_flow, "save_chat_turn_metric"),
-            ):
-                result = chat_flow.chat_endpoint(self._request(message))
+            with self.subTest(message=message):
+                with (
+                    patch.object(chat_flow.chat, "chat_endpoint") as delegated,
+                    patch.object(chat_flow, "save_chat_turn_metric"),
+                ):
+                    result = chat_flow.chat_endpoint(self._request(message))
 
-            self.assertEqual(result["status"], "ready_for_confirmation")
-            self.assertEqual(result["event"]["title"], "gra w valorant")
-            self.assertEqual(result["event"]["time_hint"], "12:00")
-            self.assertEqual(result["event"]["duration_minutes"], 90)
-            self.assertIn("gra w valorant", result["message"])
-            delegated.assert_not_called()
+                self.assertEqual(result["status"], "ready_for_confirmation")
+                self.assertEqual(result["event"]["title"], "gra w valorant")
+                self.assertEqual(result["event"]["time_hint"], "12:00")
+                self.assertEqual(result["event"]["duration_minutes"], 90)
+                self.assertIn("gra w valorant", result["message"])
+                delegated.assert_not_called()
 
     def test_original_problematic_message_keeps_relative_date(self):
         with patch.object(chat_flow, "save_chat_turn_metric"):
