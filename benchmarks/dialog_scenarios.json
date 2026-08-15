@@ -154,8 +154,98 @@
         "message": "jakie mam plany na najbliższe 2 tygodnie",
         "expected_status": "calendar_search",
         "expected_event": {
-          "operation": "search"
+          "operation": "search",
+          "search": {
+            "range_type": "next_days",
+            "range_days": 14,
+            "title": null,
+            "date_hint": null,
+            "time_hint": null
+          }
         }
+      }
+    ]
+  },
+  {
+    "id": "search_today",
+    "category": "search_read_only",
+    "turns": [
+      {
+        "message": "co mam dzisiaj",
+        "expected_status": "calendar_search",
+        "expected_event": {
+          "operation": "search",
+          "search": {
+            "title": null,
+            "date_hint": "dzisiaj",
+            "time_hint": null
+          }
+        }
+      }
+    ]
+  },
+  {
+    "id": "search_tomorrow_at_time",
+    "category": "search_read_only",
+    "turns": [
+      {
+        "message": "sprawdź co mam jutro o 18",
+        "expected_status": "calendar_search",
+        "expected_event": {
+          "operation": "search",
+          "search": {
+            "title": null,
+            "date_hint": "jutro",
+            "time_hint": "18:00"
+          }
+        }
+      }
+    ]
+  },
+  {
+    "id": "search_this_week",
+    "category": "search_read_only",
+    "turns": [
+      {
+        "message": "pokaż co mam w tym tygodniu",
+        "expected_status": "calendar_search",
+        "expected_event": {
+          "operation": "search",
+          "search": {
+            "range_type": "this_week",
+            "title": null,
+            "date_hint": null,
+            "time_hint": null
+          }
+        }
+      }
+    ]
+  },
+  {
+    "id": "search_explicit_date",
+    "category": "search_read_only",
+    "turns": [
+      {
+        "message": "co mam 17.08.2026",
+        "expected_status": "calendar_search",
+        "expected_event": {
+          "operation": "search",
+          "search": {
+            "title": null,
+            "date_hint": "17.08.2026",
+            "time_hint": null
+          }
+        }
+      }
+    ]
+  },
+  {
+    "id": "delete_nonexistent_read_only",
+    "category": "delete_read_only_no_match",
+    "turns": [
+      {
+        "message": "usuń wydarzenie benchmark-nieistniejace-7f3a jutro",
+        "expected_status": "chat"
       }
     ]
   }
