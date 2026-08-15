@@ -16,12 +16,20 @@ from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
 
-from benchmark_dialog import (
-    DEFAULT_API_URL,
-    DEFAULT_SCENARIOS,
-    DEFAULT_USER_ID,
-    execute_benchmark,
-)
+try:
+    from scripts.benchmark_dialog import (
+        DEFAULT_API_URL,
+        DEFAULT_SCENARIOS,
+        DEFAULT_USER_ID,
+        execute_benchmark,
+    )
+except ModuleNotFoundError:
+    from benchmark_dialog import (
+        DEFAULT_API_URL,
+        DEFAULT_SCENARIOS,
+        DEFAULT_USER_ID,
+        execute_benchmark,
+    )
 
 DEFAULT_OUTPUT_DIR = Path(__file__).resolve().parents[1] / "benchmark_results"
 
@@ -94,7 +102,7 @@ def run_repeated_benchmark(
 ) -> dict:
     if runs <= 0:
         raise ValueError("runs must be greater than zero")
-    if not 0 <= warmup_runs:
+    if warmup_runs < 0:
         raise ValueError("warmup_runs cannot be negative")
     if runs > 4095:
         raise ValueError("runs cannot exceed 4095 for the batch run-id format")
