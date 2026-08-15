@@ -41,6 +41,11 @@ class EventReflectionRequest(BaseModel):
     user_id: str = "local-user"
 
 
+class ReflectionAnalysisRequest(BaseModel):
+    feedback_text: str = Field(min_length=1, max_length=4000)
+    user_id: str = "local-user"
+
+
 class MotivationReminderRequest(BaseModel):
     remind_at: datetime
     user_id: str = "local-user"
