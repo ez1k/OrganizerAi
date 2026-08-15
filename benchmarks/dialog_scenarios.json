@@ -35,7 +35,7 @@
   },
   {
     "id": "create_missing_duration",
-    "category": "create_clarification",
+    "category": "create_clarification_fast_path",
     "turns": [
       {
         "message": "dodaj trening jutro o 17",
@@ -47,6 +47,22 @@
           "time_hint": "17:00"
         },
         "forbidden_event_fields": ["duration_minutes"]
+      }
+    ]
+  },
+  {
+    "id": "create_llm_fallback_two_missing",
+    "category": "create_llm_fallback",
+    "turns": [
+      {
+        "message": "dodaj dentystę jutro",
+        "expected_status": "needs_input",
+        "expected_event": {
+          "operation": "create",
+          "title": "dentystę",
+          "date_hint": "jutro"
+        },
+        "forbidden_event_fields": ["time_hint", "duration_minutes"]
       }
     ]
   },
