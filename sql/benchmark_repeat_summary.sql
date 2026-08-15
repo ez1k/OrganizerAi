@@ -33,7 +33,7 @@ WHERE session_id LIKE N'bench-' + @batch_prefix + N'%'
 
 SELECT
     @batch_prefix AS benchmark_batch_prefix,
-    COUNT(*) AS measured_runs_found,
+    COUNT(DISTINCT r.run_id) AS measured_runs_found,
     MIN(m.created_at) AS first_metric_utc,
     MAX(m.created_at) AS last_metric_utc
 FROM #benchmark_runs r
