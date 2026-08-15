@@ -8,6 +8,9 @@ from google.auth.exceptions import RefreshError
 import logging
 import os
 import pickle
+from time import perf_counter
+
+from app.services.turn_timing import record_component
 
 SCOPES = ["https://www.googleapis.com/auth/calendar"]
 TOKEN_FILE = "token.pickle"
@@ -52,6 +55,15 @@ def get_calendar_service():
     return build("calendar", "v3", credentials=_run_oauth_flow())
 
 
+def _execute_calendar_request(request):
+    """Execute one Google Calendar API request and record its network latency."""
+    started_at = perf_counter()
+    try:
+        return request.execute()
+    finally:
+        record_component("calendar", round((perf_counter() - started_at) * 1000))
+
+
 def _event_datetime(value: str | None):
     if not value: return None
     try:
@@ -76,7 +88,9 @@ def create_event(event: dict, allow_duplicate: bool = False):
     if not allow_duplicate:
         duplicates = find_duplicate_events(event)
         if duplicates: return {"duplicate": duplicates[0]}
-    created_event = service.events().insert(calendarId="primary", body=gcal_event).execute()
+    created_event = _execute_calendar_request(
+        service.events().insert(calendarId="primary", body=gcal_event)
+    )
     return {"calendar_link": created_event.get("htmlLink")}
 
 
@@ -112,7 +126,7 @@ def search_events(title: str | None = None, start: datetime | None = None, end: 
         params = dict(base_params)
         if page_token: params["pageToken"] = page_token
         page += 1
-        response = service.events().list(**params).execute()
+        response = _execute_calendar_request(service.events().list(**params))
         items = response.get("items", [])
         logger.warning("CALENDAR SEARCH page=%s items=%s nextPageToken=%s", page, len(items), bool(response.get("nextPageToken")))
         for item in items:
@@ -141,4 +155,6 @@ def find_duplicate_events(event: dict) -> list[dict]:
 
 
 def delete_event(event_id: str):
-    get_calendar_service().events().delete(calendarId="primary", eventId=event_id).execute()
+    _execute_calendar_request(
+        get_calendar_service().events().delete(calendarId="primary", eventId=event_id)
+    )

@@ -1,79 +1,140 @@
-"""LLM adapter for structured interpretation of OrganizerAI messages."""
+"""LLM adapter for semantic interpretation of OrganizerAI messages."""
 
 import json
 import logging
+from time import perf_counter
 
 import requests
 
 from app.services.database import find_learning_examples, format_learning_examples
+from app.services.dialog_policy import apply_dialog_policy
+from app.services.turn_timing import record_component
 
 logger = logging.getLogger(__name__)
 OLLAMA_URL = "http://localhost:11434/api/chat"
 MODEL = "mistral"
 
 SYSTEM_PROMPT = """
-Jesteś modułem rozumienia języka dla aplikacji do planowania aktywności.
-NIE wykonujesz operacji na kalendarzu i NIE wymyślasz danych, których użytkownik nie podał.
-Backend wykonuje operacje na podstawie Twojego JSON.
+Jesteś modułem NLU dla aplikacji do planowania aktywności.
+Twoim zadaniem jest WYŁĄCZNIE rozpoznać znaczenie wiadomości i wyodrębnić dane.
+NIE decydujesz o stanie dialogu, potwierdzeniu ani wykonaniu operacji — robi to deterministyczny backend.
+Zwracasz wyłącznie poprawny JSON i nie wymyślasz brakujących danych.
 
-Możliwe operacje:
-- create: dodaj nowe wydarzenie
-- search: sprawdź/pokaż wydarzenia z kalendarza użytkownika
-- delete: usuń istniejące wydarzenie
-- external_search: pytanie o informacje spoza kalendarza
-- chat: zwykła rozmowa
-- cancelled: anulowanie bieżącej operacji
+Wybierz jedną operację semantyczną:
+- create: użytkownik chce dodać/zaplanować/umówić/wrzucić aktywność do kalendarza,
+- search: użytkownik pyta o własny kalendarz lub chce sprawdzić wydarzenia,
+- delete: użytkownik chce usunąć/skasować/wywalić wydarzenie,
+- external_search: pytanie dotyczy informacji spoza kalendarza, np. pogody, kina, filmu, repertuaru, wiadomości,
+- chat: zwykła rozmowa/small-talk,
+- cancelled: wyraźne anulowanie bieżącej operacji.
 
-Dla CREATE dane wydarzenia: title, date_hint, time_hint, duration_minutes, description.
-Dla SEARCH/DELETE użyj search: title, date_hint, time_hint, range_type, range_days.
+DANE:
+- CREATE -> event: title, date_hint, time_hint, duration_minutes, description.
+- SEARCH/DELETE -> search: title, date_hint, time_hint, range_type, range_days.
+- Dla SEARCH/DELETE nie wkładaj kryteriów do event.
+- Przy DELETE nigdy nie wymyślaj event_id ani selected_event_id.
 
-ZASADY:
-1. Wykorzystaj wszystkie informacje z bieżącej wiadomości i aktualnego draftu.
-2. "18", "o 18", "18:00" oznaczają time_hint, NIGDY duration_minutes.
-3. "18 min", "60 min", "godzinę", "1,5 godziny" oznaczają duration_minutes.
-4. Jeśli liczba nie ma jednostki i opisuje porę dnia, traktuj ją jako time_hint.
-5. Nigdy nie ustawiaj domyślnie 18:00.
-6. Nie wymyślaj dnia, godziny, czasu trwania ani lokalizacji.
-7. "dodaj", "zaplanuj", "umów" oznaczają CREATE.
-8. "sprawdź", "co mam", "co jest", "pokaż" oznaczają SEARCH kalendarza.
-9. Pytania o repertuar, kino, film, pogodę itp. są EXTERNAL_SEARCH.
-10. "usuń", "skasuj", "wywal" oznaczają DELETE.
-11. "ten", "ten drugi", "poprzedni", "go" mogą odnosić się do poprzednich wyników; backend je przechowuje.
-12. Przy DELETE nie wymyślaj event_id. Zwróć kryteria search.
-13. SEARCH i EXTERNAL_SEARCH nie wymagają potwierdzenia.
-14. DELETE i CREATE wymagają potwierdzenia backendu.
-15. Jeśli użytkownik pyta o coś niezależnego od poprzedniego draftu, nie kontynuuj starego draftu.
-16. Odpowiedź po polsku i krótka.
-17. Jeśli dostajesz ZWERYFIKOWANE PRZYKŁADY, traktuj je jako wzorce semantyczne podobnych wypowiedzi. Nie kopiuj z nich dat, godzin, tytułów ani innych wartości, których nie ma w bieżącej wiadomości lub aktualnym stanie.
-18. W polu reply NIGDY nie twierdź, że wydarzenie zostało dodane, zapisane, usunięte ani że właśnie je dodajesz. Nie używaj komunikatów typu "dodaję", "zaplanuję", "dodałem", "zapisałem". O wykonaniu operacji informuje wyłącznie backend po odpowiedzi Google Calendar.
-19. Jeśli użytkownik nie podał czasu trwania CREATE, duration_minutes ma być pominięte lub null. Nigdy nie przyjmuj domyślnie 60 minut.
-20. ZWRÓĆ WYŁĄCZNIE poprawny JSON.
+ZASADY EKSTRAKCJI:
+1. Używaj wyłącznie informacji z bieżącej wiadomości, historii i AKTUALNEGO STANU.
+2. Nigdy nie zakładaj domyślnie „dzisiaj”, konkretnej godziny ani czasu trwania.
+3. „18”, „o 18”, „18:00” oznaczają time_hint; konkretną godzinę normalizuj do HH:MM.
+4. „90 minut”=90, „godzinę”=60, „pół godziny”=30, „półtorej godziny”=90, „dwie godziny”=120.
+5. „o 12 półtorej godziny” oznacza time_hint="12:00" oraz duration_minutes=90, nigdy 12:30.
+6. „rano”, „po południu”, „wieczorem” nie są dokładną godziną. Nie zapisuj ich jako time_hint, jeśli brak konkretnej godziny.
+7. Jeśli daty nie podano, nie dodawaj „dziś”.
+8. Dni tygodnia zwracaj kanonicznie: poniedziałek, wtorek, środa, czwartek, piątek, sobota, niedziela.
+9. Wyodrębnij sensowny title aktywności, np. „pouczyć się” -> tytuł związany z nauką.
+10. Jeśli użytkownik zmienia temat mimo istniejącego draftu, klasyfikuj nową wiadomość według jej własnego znaczenia.
+11. Jeśli użytkownik poprawia aktywny CREATE, np. „jednak o 18:30”, zwróć podaną korektę i zachowaj semantykę operacji create.
+12. W reply nie twierdź, że operacja została już wykonana.
+
+ZWERYFIKOWANE PRZYKŁADY z retrieval są tylko wzorcami semantycznymi. Nie kopiuj z nich wartości,
+których nie ma w bieżącej wiadomości/stanie. Jeśli zawierają status, ignoruj go — status wylicza backend.
 
 FORMAT:
 {
-  "reply": "krótka odpowiedź bez twierdzenia, że operacja została wykonana",
-  "status": "needs_input | ready_for_confirmation | calendar_search | calendar_delete_confirmation | external_search | cancelled | chat",
-  "operation": "create | search | delete | external_search | chat",
-  "event": {"title": "string", "date_hint": "string", "time_hint": "string", "duration_minutes": null, "description": "string"},
+  "reply": "krótka odpowiedź po polsku",
+  "operation": "create | search | delete | external_search | chat | cancelled",
+  "event": {"title": "string", "date_hint": "string", "time_hint": "string", "duration_minutes": 90, "description": "string"},
   "search": {"title": "string", "date_hint": "string", "time_hint": "string", "range_type": "next_days | this_week", "range_days": 14}
 }
-Pola event/search mogą być częściowe.
+Pola event/search mogą być częściowe. Pomijaj wartości, których nie znasz.
 """
 
 
-def ask_llm(
+# Minimal semantic few-shots. They are intentionally different from the frozen
+# NLP evaluation utterances and do not teach dialog status/policy.
+STATIC_FEW_SHOT_MESSAGES = [
+    {
+        "role": "user",
+        "content": "wpisz mi jutro o 8 półtorej godziny pisania pracy",
+    },
+    {
+        "role": "assistant",
+        "content": json.dumps(
+            {
+                "reply": "Rozumiem dane wydarzenia.",
+                "operation": "create",
+                "event": {
+                    "title": "pisanie pracy",
+                    "date_hint": "jutro",
+                    "time_hint": "08:00",
+                    "duration_minutes": 90,
+                },
+            },
+            ensure_ascii=False,
+        ),
+    },
+    {
+        "role": "user",
+        "content": "jutro wieczorem chcę przez godzinę robić porządki",
+    },
+    {
+        "role": "assistant",
+        "content": json.dumps(
+            {
+                "reply": "Rozumiem podane dane.",
+                "operation": "create",
+                "event": {
+                    "title": "porządki",
+                    "date_hint": "jutro",
+                    "duration_minutes": 60,
+                },
+            },
+            ensure_ascii=False,
+        ),
+    },
+    {
+        "role": "user",
+        "content": "dodaj godzinę medytacji o 21",
+    },
+    {
+        "role": "assistant",
+        "content": json.dumps(
+            {
+                "reply": "Rozumiem podane dane.",
+                "operation": "create",
+                "event": {
+                    "title": "medytacja",
+                    "time_hint": "21:00",
+                    "duration_minutes": 60,
+                },
+            },
+            ensure_ascii=False,
+        ),
+    },
+]
+
+
+def ask_llm_semantic(
     message: str,
     history: list[dict],
     draft_event: dict | None = None,
     user_id: str = "local-user",
 ) -> dict:
-    """Ask Ollama for a structured interpretation of the current user message.
-
-    Only explicitly verified SQL examples are read here as few-shot context.
-    Writes are handled by the backend/feedback flow so raw model output cannot
-    silently become trusted training context.
-    """
+    """Return raw semantic NLU output without dialog-policy decisions."""
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+    messages.extend(STATIC_FEW_SHOT_MESSAGES)
 
     try:
         examples = find_learning_examples(user_id, message, limit=3)
@@ -101,25 +162,59 @@ def ask_llm(
         }
     )
 
-    response = requests.post(
-        OLLAMA_URL,
-        json={
-            "model": MODEL,
-            "messages": messages,
-            "stream": False,
-            "format": "json",
-            "options": {"temperature": 0.1, "num_predict": 350},
-        },
-        timeout=120,
-    )
-    response.raise_for_status()
+    started_at = perf_counter()
+    try:
+        response = requests.post(
+            OLLAMA_URL,
+            json={
+                "model": MODEL,
+                "messages": messages,
+                "stream": False,
+                "format": "json",
+                "options": {"temperature": 0.1, "num_predict": 300},
+            },
+            timeout=120,
+        )
+        response.raise_for_status()
+    finally:
+        record_component("llm", round((perf_counter() - started_at) * 1000))
 
     result = response.json().get("message", {}).get("content", "")
     if not result.strip():
         raise ValueError("Empty response from Ollama")
 
     parsed = json.loads(result)
-    if not isinstance(parsed, dict) or "reply" not in parsed or "status" not in parsed:
+    if not isinstance(parsed, dict):
         raise ValueError("Invalid structured response from Ollama")
-
+    parsed.setdefault("reply", "")
     return parsed
+
+
+def ask_llm(
+    message: str,
+    history: list[dict],
+    draft_event: dict | None = None,
+    user_id: str = "local-user",
+) -> dict:
+    """Return semantic NLU output after deterministic dialog policy.
+
+    Existing runtime callers keep using this function, while experiments can
+    call ask_llm_semantic() to inspect the raw model independently.
+    """
+    semantic = ask_llm_semantic(
+        message=message,
+        history=history,
+        draft_event=draft_event,
+        user_id=user_id,
+    )
+    policy_result = apply_dialog_policy(message, semantic, current_state=draft_event)
+
+    # The legacy core routes every operation="delete" directly into Calendar
+    # search. For an under-specified DELETE, keep the semantic decision in a
+    # private field but route through the generic needs_input response instead.
+    if policy_result.get("operation") == "delete" and policy_result.get("status") == "needs_input":
+        policy_result["semantic_operation"] = "delete"
+        policy_result["operation"] = "__needs_input__"
+        policy_result["reply"] = "Które wydarzenie mam usunąć? Podaj nazwę, dzień lub inne kryterium."
+
+    return policy_result

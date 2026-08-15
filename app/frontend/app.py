@@ -1,6 +1,7 @@
 """Streamlit frontend for the OrganizerAI conversational calendar."""
 
 import os
+from uuid import uuid4
 
 import requests
 import streamlit as st
@@ -188,6 +189,7 @@ for key, default in (
     ("feedback_candidate", None),
     ("pending_feedback_id", None),
     ("feedback_notice", None),
+    ("session_id", str(uuid4())),
 ):
     if key not in st.session_state:
         st.session_state[key] = default
@@ -230,6 +232,7 @@ if prompt:
                 "history": history,
                 "draft_event": st.session_state.draft_event,
                 "user_id": USER_ID,
+                "session_id": st.session_state.session_id,
             },
             timeout=130,
         )
@@ -254,6 +257,8 @@ if prompt:
 
         if status in {"confirmed", "cancelled"}:
             st.session_state.draft_event = None
+            st.session_state.feedback_candidate = None
+            st.session_state.pending_feedback_id = None
         elif data.get("event"):
             st.session_state.draft_event = data["event"]
 
@@ -288,6 +293,7 @@ with col1:
         st.session_state.feedback_candidate = None
         st.session_state.pending_feedback_id = None
         st.session_state.feedback_notice = None
+        st.session_state.session_id = str(uuid4())
         st.rerun()
 
 with col2:
