@@ -66,6 +66,33 @@ python -m unittest discover -s tests -v
 
 Testy obejmują zarówno logikę wieloetapowego CREATE, granicę między deterministycznym fast-pathem i fallbackiem LLM, jak i arytmetykę podziału latencji oraz rejestrację round-tripów Ollama i Google Calendar.
 
+## Kontrolowany benchmark dialogu
+
+Reprodukowalny zestaw scenariuszy znajduje się w `benchmarks/dialog_scenarios.json`, a runner w `scripts/benchmark_dialog.py`.
+
+Uruchom przy działającym backendzie:
+
+```powershell
+python scripts/benchmark_dialog.py
+```
+
+Benchmark jest celowo niedestrukcyjny:
+
+- CREATE kończy się na `ready_for_confirmation` i nie wysyła końcowego potwierdzenia,
+- SEARCH wykonuje tylko odczyt,
+- scenariusze wieloetapowe sprawdzają zachowanie draftu i korekt,
+- benchmark nie usuwa wydarzeń.
+
+Każdy run generuje prefiks sesji w postaci `bench-<run_id>-`. Runner wypisuje go na końcu, np.:
+
+```text
+Use SQL LIKE prefix: bench-a1b2c3d4-%
+```
+
+W `sql/benchmark_run_summary.sql` wstaw ten prefiks do `@session_prefix`. Raport pokaże dla każdego scenariusza liczbę turnów, status path, liczbę wywołań LLM/Calendar, rozkład czasu i wyliczoną ścieżkę wykonania: `deterministic`, `llm`, `calendar` lub `llm+calendar`.
+
+Scenariusze benchmarkowe powinny być wersjonowane razem z kodem. Dzięki temu kolejne optymalizacje można porównywać na tym samym zbiorze wejść zamiast opierać się na pojedynczych ręcznych rozmowach.
+
 ## Raport ewaluacyjny
 
 Po zebraniu danych uruchom `sql/evaluation_summary.sql`. Zapytania zwracają:
@@ -88,6 +115,7 @@ Najbardziej użyteczne wskaźniki do części eksperymentalnej:
 - **average / P95 latency** — średni i wysokokwantilowy całkowity czas odpowiedzi,
 - **LLM / Calendar / backend time share** — udział poszczególnych komponentów w czasie obsługi,
 - **fast-path vs LLM latency** — różnica czasu obsługi jednoznacznych CREATE i CREATE wymagających modelu,
+- **scenario pass rate** — udział scenariuszy benchmarkowych, które zwróciły oczekiwany status i kluczowe sloty,
 - **error rate** — udział sesji zawierających status `error`.
 
 Dla CREATE wyższy clarification rate nie musi oznaczać gorszej jakości: przy wymaganiu precyzyjnego wpisu doprecyzowanie jest pożądanym zachowaniem, jeśli zapobiega zapisaniu niepełnego wydarzenia.
