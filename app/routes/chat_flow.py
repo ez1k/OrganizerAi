@@ -44,6 +44,7 @@ DELETE_CANCEL_RE = re.compile(
     r"(?:\s*[,\-]?\s+(?:jednak|w\s+sumie|dobra))?\s*[.!]?\s*$",
     re.I,
 )
+DELETE_INTENT_RE = re.compile(r"\b(?:usuń|usun|skasuj|wywal)\b", re.I)
 DUPLICATE_DECLINE_RE = re.compile(
     r"^\s*(?:a\s+)?(?:to\s+)?(?:w\s+takim\s+razie\s+)?(?:jednak\s+)?nie\s*[.!]?\s*$",
     re.I,
@@ -53,6 +54,16 @@ CREATE_DAY_AT_RE = re.compile(
     r"środę|środa|srodę|srode|sroda|czwartek|piątek|piatek|sobotę|sobote|"
     r"sobota|niedzielę|niedziele|niedziela)\b"
     r"\s+na\s+([01]?\d|2[0-3])(?:[:.]([0-5]\d))?\b",
+    re.I,
+)
+DELETE_TRAILING_DAY_RE = re.compile(
+    r"\s+(?:dzisiaj|dziś|jutro|pojutrze|poniedziałek|poniedzialek|wtorek|"
+    r"środę|środa|srodę|srode|sroda|czwartek|piątek|piatek|sobotę|sobote|"
+    r"sobota|niedzielę|niedziele|niedziela)\s*$",
+    re.I,
+)
+DELETE_TRAILING_DATE_RE = re.compile(
+    r"\s+\d{1,2}[./-]\d{1,2}(?:[./-]\d{4})?\s*$",
     re.I,
 )
 
@@ -194,6 +205,79 @@ def _deterministic_create_fast_path(request: ChatRequest, state: dict) -> dict |
     return None
 
 
+def _clean_delete_title(value: str | None) -> str | None:
+    title = str(value or "").strip(" .,!?-")
+    if not title:
+        return None
+
+    previous = None
+    while title and title != previous:
+        previous = title
+        title = DELETE_TRAILING_DAY_RE.sub("", title).strip(" .,!?-")
+        title = DELETE_TRAILING_DATE_RE.sub("", title).strip(" .,!?-")
+
+    return title or None
+
+
+def _deterministic_delete_fast_path(request: ChatRequest, state: dict) -> dict | None:
+    """Resolve explicit initial DELETE criteria without paying the LLM cost.
+
+    The fast path performs only a Calendar search. It never deletes anything;
+    mutation still requires a later explicit confirmation handled by the active
+    DELETE state.
+    """
+    if state or not DELETE_INTENT_RE.search(request.message):
+        return None
+
+    criteria = chat._normalize_search_criteria(
+        chat._extract_search_criteria(request.message, None)
+    )
+    if criteria.get("title"):
+        criteria["title"] = _clean_delete_title(criteria.get("title"))
+
+    if not any(criteria.values()):
+        return None
+
+    try:
+        events = chat._calendar_call(chat._search_calendar, criteria)
+    except chat.CalendarAuthRequired as exc:
+        return {
+            "status": "calendar_auth_required",
+            "message": "Google Calendar wymaga ponownej autoryzacji. Stan operacji został zachowany.",
+            "error": str(exc),
+            "event": None,
+        }
+    except ValueError as exc:
+        return {"status": "needs_input", "message": str(exc), "event": None}
+
+    if not events:
+        return {
+            "status": "calendar_delete_not_found",
+            "message": "Nie znalazłem pasującego wydarzenia do usunięcia.",
+            "event": None,
+        }
+
+    if len(events) > 1:
+        return {
+            "status": "calendar_delete_confirmation",
+            "message": (
+                chat._format_events(events)
+                + "\nKtóre wydarzenie mam usunąć? Podaj numer albo napisz „usuń oba/wszystkie”."
+            ),
+            "event": {"operation": "delete", "search": criteria, "matches": events},
+        }
+
+    event = events[0]
+    return {
+        "status": "calendar_delete_confirmation",
+        "message": (
+            f"Znalazłem „{event['title']}” o {event.get('start', '?')}. "
+            "Czy chcesz je usunąć?"
+        ),
+        "event": {"operation": "delete", "search": criteria, "matches": [event]},
+    }
+
+
 def _session_id(request: ChatRequest) -> str:
     explicit = str(request.session_id or "").strip()
     if explicit:
@@ -227,6 +311,7 @@ def _infer_operation(request: ChatRequest, result: dict) -> str:
         "calendar_duplicate_confirmation": "create",
         "deleted": "delete",
         "calendar_delete_confirmation": "delete",
+        "calendar_delete_not_found": "delete",
         "calendar_search": "search",
         "external_search": "external_search",
     }
@@ -234,6 +319,8 @@ def _infer_operation(request: ChatRequest, result: dict) -> str:
         return status_operations[status]
     if chat.CREATE_INTENT_RE.search(request.message):
         return "create"
+    if DELETE_INTENT_RE.search(request.message):
+        return "delete"
     return "chat"
 
 
@@ -347,6 +434,10 @@ def _chat_endpoint_inner(request: ChatRequest, started_at: float):
     fast_path_result = _deterministic_create_fast_path(request, state)
     if fast_path_result is not None:
         return _finish(request, fast_path_result, started_at)
+
+    delete_fast_path_result = _deterministic_delete_fast_path(request, state)
+    if delete_fast_path_result is not None:
+        return _finish(request, delete_fast_path_result, started_at)
 
     delegated_request = _with_create_time_override(request, state)
     delegated_state = delegated_request.draft_event or state
