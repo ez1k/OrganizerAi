@@ -4,6 +4,8 @@ from sqlalchemy import text
 
 from app.services.database import get_engine, get_or_create_user_id
 
+TIMING_VERSION = 1
+
 
 def save_chat_turn_metric(
     user_id: str,
@@ -38,6 +40,7 @@ def save_chat_turn_metric(
                     backend_latency_ms,
                     llm_calls,
                     calendar_calls,
+                    timing_version,
                     clarification_required,
                     had_draft,
                     message_length
@@ -53,6 +56,7 @@ def save_chat_turn_metric(
                     :backend_latency_ms,
                     :llm_calls,
                     :calendar_calls,
+                    :timing_version,
                     :clarification_required,
                     :had_draft,
                     :message_length
@@ -70,6 +74,7 @@ def save_chat_turn_metric(
                 "backend_latency_ms": max(0, int(backend_latency_ms)),
                 "llm_calls": max(0, int(llm_calls)),
                 "calendar_calls": max(0, int(calendar_calls)),
+                "timing_version": TIMING_VERSION,
                 "clarification_required": bool(clarification_required),
                 "had_draft": bool(had_draft),
                 "message_length": max(0, int(message_length)),
