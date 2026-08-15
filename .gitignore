@@ -1,3 +1,4 @@
 /credentials.json
 data/learning_examples.jsonl
+benchmark_results/
 .env
