@@ -20,6 +20,15 @@ CREATE_DECLINE_RE = re.compile(
     r"^\s*(?:nie|nie\s+teraz|jeszcze\s+nie)\s*[.!]?\s*$",
     re.I,
 )
+CREATE_CONFIRM_RE = re.compile(
+    r"^\s*(?:tak\s*,?\s*(?:dodaj|zapisz)(?:\s+to)?|tak|ok\s+dodaj|okej\s+dodaj|"
+    r"no\s+dodaj|dawaj|dodawaj|dodaj(?:\s+to)?|zapisz(?:\s+to)?)\s*[.!]?\s*$",
+    re.I,
+)
+DUPLICATE_DECLINE_RE = re.compile(
+    r"^\s*(?:a\s+)?(?:to\s+)?(?:w\s+takim\s+razie\s+)?(?:jednak\s+)?nie\s*[.!]?\s*$",
+    re.I,
+)
 CREATE_DAY_AT_RE = re.compile(
     r"\b(?:dzisiaj|dziś|jutro|pojutrze|poniedziałek|poniedzialek|wtorek|"
     r"środę|środa|srodę|srode|sroda|czwartek|piątek|piatek|sobotę|sobote|"
@@ -35,6 +44,20 @@ def _is_create_cancel(message: str) -> bool:
 
 def _is_create_decline(message: str) -> bool:
     return bool(CREATE_DECLINE_RE.fullmatch(str(message or "")))
+
+
+def _is_create_confirmation(message: str) -> bool:
+    return bool(CREATE_CONFIRM_RE.fullmatch(str(message or "")))
+
+
+def _is_duplicate_decline(message: str) -> bool:
+    return bool(DUPLICATE_DECLINE_RE.fullmatch(str(message or "")))
+
+
+def _copy_request(request: ChatRequest, **updates) -> ChatRequest:
+    if hasattr(request, "model_copy"):
+        return request.model_copy(update=updates)
+    return request.copy(update=updates)
 
 
 def _extract_create_time_override(message: str, state: dict) -> str | None:
@@ -66,10 +89,18 @@ def _with_create_time_override(request: ChatRequest, state: dict) -> ChatRequest
     enriched_draft = dict(request.draft_event or {})
     enriched_draft["operation"] = "create"
     enriched_draft["time_hint"] = time_hint
+    return _copy_request(request, draft_event=enriched_draft)
 
-    if hasattr(request, "model_copy"):
-        return request.model_copy(update={"draft_event": enriched_draft})
-    return request.copy(update={"draft_event": enriched_draft})
+
+def _with_normalized_create_confirmation(request: ChatRequest, state: dict) -> ChatRequest:
+    """Map natural confirmation variants to the core backend's canonical ``tak``.
+
+    The original request is still used for metrics; only the delegated request
+    is normalized so phrases such as ``tak dodaj`` do not fall through to the LLM.
+    """
+    if state.get("operation") != "create" or not _is_create_confirmation(request.message):
+        return request
+    return _copy_request(request, message="tak")
 
 
 def _session_id(request: ChatRequest) -> str:
@@ -153,6 +184,17 @@ def chat_endpoint(request: ChatRequest):
                 started_at,
             )
 
+        if state.get("allow_duplicate") and _is_duplicate_decline(request.message):
+            return _finish(
+                request,
+                {
+                    "status": "cancelled",
+                    "message": "OK, nie dodaję kolejnego duplikatu do Google Calendar.",
+                    "event": None,
+                },
+                started_at,
+            )
+
         if _is_create_decline(request.message):
             if state.get("allow_duplicate"):
                 return _finish(
@@ -179,5 +221,7 @@ def chat_endpoint(request: ChatRequest):
             )
 
     delegated_request = _with_create_time_override(request, state)
+    delegated_state = delegated_request.draft_event or state
+    delegated_request = _with_normalized_create_confirmation(delegated_request, delegated_state)
     result = chat.chat_endpoint(delegated_request)
     return _finish(request, result, started_at)
