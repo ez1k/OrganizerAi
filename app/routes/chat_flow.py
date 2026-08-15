@@ -56,6 +56,7 @@ CREATE_DAY_AT_RE = re.compile(
     r"\s+na\s+([01]?\d|2[0-3])(?:[:.]([0-5]\d))?\b",
     re.I,
 )
+CREATE_DELIMITED_SPLIT_RE = re.compile(r"\s+[-–—]\s+")
 DELETE_TRAILING_DAY_RE = re.compile(
     r"\s+(?:dzisiaj|dziś|jutro|pojutrze|poniedziałek|poniedzialek|wtorek|"
     r"środę|środa|srodę|srode|sroda|czwartek|piątek|piatek|sobotę|sobote|"
@@ -96,6 +97,20 @@ def _copy_request(request: ChatRequest, **updates) -> ChatRequest:
     if hasattr(request, "model_copy"):
         return request.model_copy(update=updates)
     return request.copy(update=updates)
+
+
+def _extract_delimited_create_title(message: str) -> str | None:
+    """Extract a title from explicit ``term - title - duration`` CREATE syntax."""
+    parts = [part.strip() for part in CREATE_DELIMITED_SPLIT_RE.split(str(message or ""))]
+    if len(parts) < 3 or not chat.CREATE_INTENT_RE.search(parts[0]):
+        return None
+    if chat._extract_duration_minutes(parts[-1]) is None:
+        return None
+
+    candidate = " - ".join(parts[1:-1]).strip(" ,.;:-")
+    if not candidate or not re.search(r"[^\W\d_]", candidate, re.UNICODE):
+        return None
+    return candidate
 
 
 def _extract_create_time_override(message: str, state: dict) -> str | None:
@@ -172,6 +187,10 @@ def _deterministic_create_fast_path(request: ChatRequest, state: dict) -> dict |
         request.message,
         continuation=state.get("operation") == "create",
     )
+    delimited_title = _extract_delimited_create_title(request.message)
+    if delimited_title:
+        fields["title"] = delimited_title
+
     time_override = _extract_create_time_override(request.message, state)
     if time_override:
         fields["time_hint"] = time_override
@@ -189,9 +208,27 @@ def _deterministic_create_fast_path(request: ChatRequest, state: dict) -> dict |
 
     missing = chat._missing_event(event)
     if not missing:
+        try:
+            summary = chat._create_confirmation_message(event)
+        except ValueError as exc:
+            logger.warning("CREATE fast-path rejected unparseable term: %s", exc)
+            safe_event = dict(event)
+            safe_event.pop("date_hint", None)
+            safe_event.pop("time_hint", None)
+            return {
+                "status": "needs_input",
+                "message": (
+                    "Nie udało mi się bezpiecznie rozpoznać terminu wydarzenia. "
+                    + chat._create_missing_message(
+                        safe_event,
+                        ["date_hint", "time_hint"],
+                    )
+                ),
+                "event": safe_event,
+            }
         return {
             "status": "ready_for_confirmation",
-            "message": chat._create_confirmation_message(event),
+            "message": summary,
             "event": event,
         }
 
