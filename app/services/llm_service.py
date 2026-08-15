@@ -7,6 +7,7 @@ from time import perf_counter
 import requests
 
 from app.services.database import find_learning_examples, format_learning_examples
+from app.services.dialog_policy import apply_dialog_policy
 from app.services.turn_timing import record_component
 
 logger = logging.getLogger(__name__)
@@ -125,17 +126,13 @@ STATIC_FEW_SHOT_MESSAGES = [
 ]
 
 
-def ask_llm(
+def ask_llm_semantic(
     message: str,
     history: list[dict],
     draft_event: dict | None = None,
     user_id: str = "local-user",
 ) -> dict:
-    """Ask Ollama for semantic NLU output.
-
-    The model extracts operation and semantic slots. Dialog status/policy is
-    intentionally applied later by app.services.dialog_policy.
-    """
+    """Return raw semantic NLU output without dialog-policy decisions."""
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
     messages.extend(STATIC_FEW_SHOT_MESSAGES)
 
@@ -191,3 +188,23 @@ def ask_llm(
         raise ValueError("Invalid structured response from Ollama")
     parsed.setdefault("reply", "")
     return parsed
+
+
+def ask_llm(
+    message: str,
+    history: list[dict],
+    draft_event: dict | None = None,
+    user_id: str = "local-user",
+) -> dict:
+    """Return semantic NLU output after deterministic dialog policy.
+
+    Existing runtime callers keep using this function, while experiments can
+    call ask_llm_semantic() to inspect the raw model independently.
+    """
+    semantic = ask_llm_semantic(
+        message=message,
+        history=history,
+        draft_event=draft_event,
+        user_id=user_id,
+    )
+    return apply_dialog_policy(message, semantic, current_state=draft_event)
