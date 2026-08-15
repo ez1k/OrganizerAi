@@ -39,12 +39,23 @@ Różnica może wynosić pojedyncze milisekundy z powodu zaokrągleń; `backend_
 
 CREATE wykorzystuje dwa poziomy interpretacji:
 
-1. **deterministyczny fast-path** — jeśli parser jednoznacznie wyodrębni wszystkie wymagane sloty (`title`, `date_hint`, `time_hint`, `duration_minutes`), backend buduje podsumowanie bez wywołania LLM,
-2. **LLM fallback** — wypowiedzi niepełne lub niejednoznaczne są przekazywane do dotychczasowego routera i modelu, a wynik nadal podlega deterministycznej sanityzacji oraz walidacji backendu.
+1. **deterministyczny fast-path** — jeśli parser jednoznacznie wyodrębni wszystkie wymagane sloty (`title`, `date_hint`, `time_hint`, `duration_minutes`), backend buduje podsumowanie bez wywołania LLM; jeżeli brakuje dokładnie jednego wymaganego slotu, backend deterministycznie pyta tylko o ten slot,
+2. **LLM fallback** — bardziej niepełne lub niejednoznaczne wypowiedzi są przekazywane do dotychczasowego routera i modelu, a wynik nadal podlega deterministycznej sanityzacji oraz walidacji backendu.
 
 Fast-path nie wykonuje zapisu do Google Calendar. Niezależnie od sposobu interpretacji finalny CREATE nadal wymaga podsumowania i jawnego potwierdzenia użytkownika.
 
 Takie rozwiązanie pozwala mierzyć kompromis między jakością NLP i wydajnością. Jednoznaczne polecenia nie ponoszą kosztu inferencji modelu, natomiast Mistral pozostaje odpowiedzialny za przypadki wymagające interpretacji języka naturalnego. W danych można to rozróżnić przez `llm_calls`: fast-path ma `llm_calls = 0`, a ścieżka modelowa `llm_calls > 0`.
+
+## Bezpieczeństwo DELETE
+
+Operacja DELETE jest traktowana bardziej konserwatywnie niż CREATE. Aktywny flow usuwania:
+
+- akceptuje jednoznaczne potwierdzenia, np. `tak`, `tak usuń`, `potwierdzam`,
+- `nie`, `anuluj`, `nieważne` i podobne warianty kończą flow bez usuwania,
+- niejednoznaczne potwierdzenia używane w CREATE, np. `dawaj`, są blokowane przed core i wymagają ponownego jednoznacznego potwierdzenia,
+- wiele pasujących wydarzeń wymaga wyboru numeru albo osobnego kroku `usuń wszystkie`, a dopiero kolejny jednoznaczny turn może wykonać mutację.
+
+Pełne rozgałęzienia DELETE są testowane z mockowanym `delete_event`, dzięki czemu testy bezpieczeństwa nie modyfikują prawdziwego kalendarza.
 
 ## Instalacja / aktualizacja tabeli
 
@@ -64,7 +75,7 @@ Skrypt jest idempotentny. Jeśli tabela już istnieje, doda brakujące kolumny k
 python -m unittest discover -s tests -v
 ```
 
-Testy obejmują zarówno logikę wieloetapowego CREATE, granicę między deterministycznym fast-pathem i fallbackiem LLM, jak i arytmetykę podziału latencji oraz rejestrację round-tripów Ollama i Google Calendar.
+Testy obejmują logikę wieloetapowego CREATE, granicę między deterministycznym fast-pathem i fallbackiem LLM, anulowanie, bezpieczne potwierdzenia DELETE, wybór spośród wielu wyników, `usuń wszystkie`, arytmetykę podziału latencji oraz rejestrację round-tripów Ollama i Google Calendar.
 
 ## Kontrolowany benchmark dialogu
 
@@ -78,10 +89,11 @@ python scripts/benchmark_dialog.py
 
 Benchmark jest celowo niedestrukcyjny:
 
-- CREATE kończy się na `ready_for_confirmation` i nie wysyła końcowego potwierdzenia,
-- SEARCH wykonuje tylko odczyt,
-- scenariusze wieloetapowe sprawdzają zachowanie draftu i korekt,
-- benchmark nie usuwa wydarzeń.
+- CREATE kończy się przed rzeczywistym zapisem i nie wysyła końcowego potwierdzenia,
+- SEARCH wykonuje wyłącznie odczyty; zestaw obejmuje zakres 2 tygodni, `dzisiaj`, `jutro o 18`, bieżący tydzień i konkretną datę,
+- scenariusze wieloetapowe sprawdzają zachowanie draftu, korekt i anulowania,
+- DELETE w benchmarku integracyjnym używa unikalnego, nieistniejącego tytułu i nigdy nie wysyła potwierdzenia mutacji,
+- pełne ścieżki mutujące DELETE pozostają w mockowanych testach jednostkowych.
 
 Każdy run generuje prefiks sesji w postaci `bench-<run_id>-`. Runner wypisuje go na końcu, np.:
 
@@ -89,7 +101,7 @@ Każdy run generuje prefiks sesji w postaci `bench-<run_id>-`. Runner wypisuje g
 Use SQL LIKE prefix: bench-a1b2c3d4-%
 ```
 
-W `sql/benchmark_run_summary.sql` wstaw ten prefiks do `@session_prefix`. Raport pokaże dla każdego scenariusza liczbę turnów, status path, liczbę wywołań LLM/Calendar, rozkład czasu i wyliczoną ścieżkę wykonania: `deterministic`, `llm`, `calendar` lub `llm+calendar`.
+`sql/benchmark_run_summary.sql` domyślnie sam wykrywa najnowszy run `bench-*`. Można też ręcznie podać starszy prefix w `@session_prefix`, gdy porównywane są dwa różne uruchomienia. Raport pokazuje dla każdego scenariusza liczbę turnów, status path, liczbę wywołań LLM/Calendar, rozkład czasu i wyliczoną ścieżkę wykonania: `deterministic`, `llm`, `calendar` lub `llm+calendar`.
 
 Scenariusze benchmarkowe powinny być wersjonowane razem z kodem. Dzięki temu kolejne optymalizacje można porównywać na tym samym zbiorze wejść zamiast opierać się na pojedynczych ręcznych rozmowach.
 
@@ -116,6 +128,7 @@ Najbardziej użyteczne wskaźniki do części eksperymentalnej:
 - **LLM / Calendar / backend time share** — udział poszczególnych komponentów w czasie obsługi,
 - **fast-path vs LLM latency** — różnica czasu obsługi jednoznacznych CREATE i CREATE wymagających modelu,
 - **scenario pass rate** — udział scenariuszy benchmarkowych, które zwróciły oczekiwany status i kluczowe sloty,
+- **safe-delete rate** — udział scenariuszy DELETE, w których żadna mutacja nie zachodzi przed jednoznacznym potwierdzeniem,
 - **error rate** — udział sesji zawierających status `error`.
 
 Dla CREATE wyższy clarification rate nie musi oznaczać gorszej jakości: przy wymaganiu precyzyjnego wpisu doprecyzowanie jest pożądanym zachowaniem, jeśli zapobiega zapisaniu niepełnego wydarzenia.
