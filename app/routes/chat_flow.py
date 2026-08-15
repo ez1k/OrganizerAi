@@ -8,6 +8,11 @@ from fastapi import APIRouter
 from app.routes import chat
 from app.schemas import ChatRequest
 from app.services.metrics_service import save_chat_turn_metric
+from app.services.turn_timing import (
+    reset_turn_timing,
+    snapshot_turn_timing,
+    start_turn_timing,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -149,6 +154,10 @@ def _infer_operation(request: ChatRequest, result: dict) -> str:
 def _finish(request: ChatRequest, result: dict, started_at: float) -> dict:
     latency_ms = max(0, round((perf_counter() - started_at) * 1000))
     status = str(result.get("status") or "unknown")
+    components = snapshot_turn_timing()
+    llm_latency_ms = components["llm_latency_ms"]
+    calendar_latency_ms = components["calendar_latency_ms"]
+    backend_latency_ms = max(0, latency_ms - llm_latency_ms - calendar_latency_ms)
 
     try:
         save_chat_turn_metric(
@@ -157,6 +166,11 @@ def _finish(request: ChatRequest, result: dict, started_at: float) -> dict:
             operation=_infer_operation(request, result),
             status=status,
             latency_ms=latency_ms,
+            llm_latency_ms=llm_latency_ms,
+            calendar_latency_ms=calendar_latency_ms,
+            backend_latency_ms=backend_latency_ms,
+            llm_calls=components["llm_calls"],
+            calendar_calls=components["calendar_calls"],
             clarification_required=status == "needs_input",
             had_draft=bool(request.draft_event),
             message_length=len(request.message),
@@ -167,9 +181,7 @@ def _finish(request: ChatRequest, result: dict, started_at: float) -> dict:
     return result
 
 
-@router.post("/chat")
-def chat_endpoint(request: ChatRequest):
-    started_at = perf_counter()
+def _chat_endpoint_inner(request: ChatRequest, started_at: float):
     state = request.draft_event or {}
 
     if state.get("operation") == "create":
@@ -225,3 +237,13 @@ def chat_endpoint(request: ChatRequest):
     delegated_request = _with_normalized_create_confirmation(delegated_request, delegated_state)
     result = chat.chat_endpoint(delegated_request)
     return _finish(request, result, started_at)
+
+
+@router.post("/chat")
+def chat_endpoint(request: ChatRequest):
+    started_at = perf_counter()
+    timing_token = start_turn_timing()
+    try:
+        return _chat_endpoint_inner(request, started_at)
+    finally:
+        reset_turn_timing(timing_token)
