@@ -147,6 +147,45 @@ def search_events(title: str | None = None, start: datetime | None = None, end: 
     return events[:max_results]
 
 
+def list_recent_completed_events(days: int = 14, max_results: int = 20) -> list[dict]:
+    """Return recent Calendar events that have definitely ended.
+
+    Values are normalized to timezone-aware ISO datetimes so the reflection API
+    can persist both timed and all-day Google Calendar events consistently.
+    """
+    safe_days = max(1, min(int(days), 90))
+    safe_limit = max(1, min(int(max_results), 100))
+    now = datetime.now(CALENDAR_TZ)
+    window_start = now - timedelta(days=safe_days)
+
+    candidates = search_events(
+        start=window_start,
+        end=now,
+        max_results=max(safe_limit * 3, safe_limit),
+    )
+
+    completed = []
+    for event in candidates:
+        event_id = str(event.get("id") or "").strip()
+        start_dt = _event_datetime(event.get("start"))
+        end_dt = _event_datetime(event.get("end"))
+        if not event_id or start_dt is None or end_dt is None or end_dt > now:
+            continue
+
+        completed.append(
+            {
+                **event,
+                "id": event_id,
+                "title": str(event.get("title") or "(bez tytułu)").strip() or "(bez tytułu)",
+                "start": start_dt.astimezone(CALENDAR_TZ).isoformat(),
+                "end": end_dt.astimezone(CALENDAR_TZ).isoformat(),
+            }
+        )
+
+    completed.sort(key=lambda item: _event_datetime(item.get("end")) or window_start, reverse=True)
+    return completed[:safe_limit]
+
+
 def find_duplicate_events(event: dict) -> list[dict]:
     start, end = _event_datetime(event.get("start")), _event_datetime(event.get("end"))
     if not start or not end: return []
