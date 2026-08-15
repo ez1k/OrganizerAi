@@ -266,12 +266,12 @@ def _render_event_reflections() -> None:
     feedback_text = st.text_area(
         "Jak oceniasz to wydarzenie?",
         placeholder="Np. Było super, dobrze odpocząłem i chętnie zrobiłbym to ponownie.",
-        key="reflection_feedback_text",
+        key=f"reflection_feedback_text_{selected_id}",
     )
     rating_choice = st.selectbox(
         "Ocena 1–5 (opcjonalnie)",
         options=["Nie podaję", 1, 2, 3, 4, 5],
-        key="reflection_rating",
+        key=f"reflection_rating_{selected_id}",
     )
 
     if st.button("🧠 Przeanalizuj i zapisz ocenę", use_container_width=True, key="save_reflection"):
@@ -321,7 +321,6 @@ def _render_event_reflections() -> None:
                 )
             else:
                 _set_notice("success", "Ocena wydarzenia została zapisana.")
-            st.session_state.reflection_feedback_text = ""
             st.rerun()
         except requests.RequestException as exc:
             st.error(f"Nie udało się przeanalizować lub zapisać oceny: {exc}")
