@@ -109,11 +109,11 @@ def _with_normalized_create_confirmation(request: ChatRequest, state: dict) -> C
 
 
 def _deterministic_create_fast_path(request: ChatRequest, state: dict) -> dict | None:
-    """Return a CREATE summary without LLM when all required slots are explicit.
+    """Handle safe CREATE parsing without LLM when intent and slots are explicit.
 
-    This is intentionally conservative: partial or ambiguous messages still go
-    through the core router/LLM. A complete deterministic parse is safe to use
-    because the backend already owns validation and final Calendar confirmation.
+    Complete drafts go straight to the confirmation summary. If exactly one
+    required slot is missing, the backend asks for that slot deterministically.
+    More ambiguous cases still fall back to the core router/LLM.
     """
     is_create_context = state.get("operation") == "create" or bool(
         chat.CREATE_INTENT_RE.search(request.message)
@@ -147,14 +147,22 @@ def _deterministic_create_fast_path(request: ChatRequest, state: dict) -> dict |
     event.update(fields)
     event["operation"] = "create"
 
-    if chat._missing_event(event):
-        return None
+    missing = chat._missing_event(event)
+    if not missing:
+        return {
+            "status": "ready_for_confirmation",
+            "message": chat._create_confirmation_message(event),
+            "event": event,
+        }
 
-    return {
-        "status": "ready_for_confirmation",
-        "message": chat._create_confirmation_message(event),
-        "event": event,
-    }
+    if len(missing) == 1:
+        return {
+            "status": "needs_input",
+            "message": chat._create_missing_message(event, missing),
+            "event": event,
+        }
+
+    return None
 
 
 def _session_id(request: ChatRequest) -> str:
