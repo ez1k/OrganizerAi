@@ -7,6 +7,7 @@ from fastapi import APIRouter, HTTPException, Query
 
 from app.schemas import (
     EventReflectionRequest,
+    MotivationReminderNaturalRequest,
     MotivationReminderRequest,
     MotivationReminderStatusRequest,
     ReflectionAnalysisRequest,
@@ -18,6 +19,7 @@ from app.services.event_reflection_service import (
     schedule_motivation_reminder,
     update_motivation_reminder_status,
 )
+from app.services.motivation_time_service import parse_motivation_reminder_time
 from app.services.reflection_nlp_service import analyze_event_reflection
 
 logger = logging.getLogger(__name__)
@@ -94,6 +96,35 @@ def create_motivation_reminder(reflection_id: int, request: MotivationReminderRe
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
         logger.exception("Failed to schedule reminder for reflection_id=%s", reflection_id)
+        raise HTTPException(status_code=500, detail="Nie udało się zapisać przypomnienia.") from exc
+
+
+@router.post("/reflections/{reflection_id}/reminders/from-text")
+def create_motivation_reminder_from_text(
+    reflection_id: int,
+    request: MotivationReminderNaturalRequest,
+):
+    """Parse an explicit relative delay and schedule a reminder after user consent."""
+    try:
+        remind_at = parse_motivation_reminder_time(request.when_text)
+        reminder = schedule_motivation_reminder(
+            user_id=request.user_id,
+            reflection_id=reflection_id,
+            remind_at=remind_at,
+        )
+        if reminder is None:
+            raise HTTPException(status_code=404, detail="Nie znaleziono oceny wydarzenia dla tego użytkownika.")
+        return {
+            "status": "scheduled",
+            "interpreted_remind_at": remind_at.isoformat(),
+            "reminder": reminder,
+        }
+    except HTTPException:
+        raise
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("Failed to schedule natural reminder for reflection_id=%s", reflection_id)
         raise HTTPException(status_code=500, detail="Nie udało się zapisać przypomnienia.") from exc
 
 
