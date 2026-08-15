@@ -1,0 +1,125 @@
+[
+  {
+    "id": "create_fast_explicit",
+    "category": "create_fast_path",
+    "turns": [
+      {
+        "message": "dodaj fryzjera pojutrze o 15 na 30 min",
+        "expected_status": "ready_for_confirmation",
+        "expected_event": {
+          "operation": "create",
+          "title": "fryzjera",
+          "date_hint": "pojutrze",
+          "time_hint": "15:00",
+          "duration_minutes": 30
+        }
+      }
+    ]
+  },
+  {
+    "id": "create_fast_colloquial",
+    "category": "create_fast_path",
+    "turns": [
+      {
+        "message": "to może dodaj siłownie na dziś na 16 - 90 min",
+        "expected_status": "ready_for_confirmation",
+        "expected_event": {
+          "operation": "create",
+          "title": "siłownie",
+          "date_hint": "dziś",
+          "time_hint": "16:00",
+          "duration_minutes": 90
+        }
+      }
+    ]
+  },
+  {
+    "id": "create_missing_duration",
+    "category": "create_clarification",
+    "turns": [
+      {
+        "message": "dodaj trening jutro o 17",
+        "expected_status": "needs_input",
+        "expected_event": {
+          "operation": "create",
+          "title": "trening",
+          "date_hint": "jutro",
+          "time_hint": "17:00"
+        },
+        "forbidden_event_fields": ["duration_minutes"]
+      }
+    ]
+  },
+  {
+    "id": "create_multiturn_completion",
+    "category": "create_multiturn",
+    "turns": [
+      {
+        "message": "hej, chce dodać trening siłowy na jutro 17",
+        "expected_status": "needs_input",
+        "expected_event": {
+          "operation": "create",
+          "title": "trening siłowy",
+          "date_hint": "jutro",
+          "time_hint": "17:00"
+        }
+      },
+      {
+        "message": "90 min",
+        "expected_status": "ready_for_confirmation",
+        "expected_event": {
+          "operation": "create",
+          "title": "trening siłowy",
+          "date_hint": "jutro",
+          "time_hint": "17:00",
+          "duration_minutes": 90
+        }
+      }
+    ]
+  },
+  {
+    "id": "create_correction_after_decline",
+    "category": "create_multiturn",
+    "turns": [
+      {
+        "message": "dodaj naukę jutro o 17 na 60 min",
+        "expected_status": "ready_for_confirmation",
+        "expected_event": {
+          "operation": "create",
+          "title": "naukę",
+          "date_hint": "jutro",
+          "time_hint": "17:00",
+          "duration_minutes": 60
+        }
+      },
+      {
+        "message": "nie",
+        "expected_status": "ready_for_confirmation"
+      },
+      {
+        "message": "jednak o 18",
+        "expected_status": "ready_for_confirmation",
+        "expected_event": {
+          "operation": "create",
+          "title": "naukę",
+          "date_hint": "jutro",
+          "time_hint": "18:00",
+          "duration_minutes": 60
+        }
+      }
+    ]
+  },
+  {
+    "id": "search_next_two_weeks",
+    "category": "search_read_only",
+    "turns": [
+      {
+        "message": "jakie mam plany na najbliższe 2 tygodnie",
+        "expected_status": "calendar_search",
+        "expected_event": {
+          "operation": "search"
+        }
+      }
+    ]
+  }
+]
