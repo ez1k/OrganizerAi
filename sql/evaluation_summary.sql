@@ -52,7 +52,7 @@ GO
 
 -- 2. Przebieg sesji: liczba turnów, doprecyzowań i sposób zakończenia.
 -- reached_action_success oznacza wykonaną akcję / zakończone wyszukiwanie.
--- resolved_state obejmuje także świadome anulowanie przez użytkownika.
+-- resolved_state obejmuje także świadome anulowanie i poprawnie zakończony DELETE bez dopasowania.
 SELECT
     session_id,
     MIN(created_at) AS started_at_utc,
@@ -61,8 +61,9 @@ SELECT
     SUM(CASE WHEN clarification_required = 1 THEN 1 ELSE 0 END) AS clarification_turns,
     MAX(CASE WHEN status IN ('confirmed', 'deleted', 'calendar_search') THEN 1 ELSE 0 END)
         AS reached_action_success,
-    MAX(CASE WHEN status IN ('confirmed', 'deleted', 'calendar_search', 'cancelled') THEN 1 ELSE 0 END)
-        AS resolved_state,
+    MAX(CASE WHEN status IN (
+        'confirmed', 'deleted', 'calendar_search', 'cancelled', 'calendar_delete_not_found'
+    ) THEN 1 ELSE 0 END) AS resolved_state,
     MAX(CASE WHEN status = 'cancelled' THEN 1 ELSE 0 END) AS cancelled_by_user,
     MAX(CASE WHEN status = 'error' THEN 1 ELSE 0 END) AS had_error,
     SUM(CASE WHEN timing_version >= 1 THEN llm_latency_ms ELSE 0 END) AS measured_llm_ms,
