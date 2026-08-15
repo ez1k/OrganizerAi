@@ -7,6 +7,11 @@ from uuid import uuid4
 import requests
 import streamlit as st
 
+from app.frontend.motivation_ui import (
+    render_due_motivation_reminders,
+    render_reflection_reminder_offer,
+)
+
 API_URL = os.getenv("ORGANIZER_API_URL", "http://127.0.0.1:8001").rstrip("/")
 USER_ID = "local-user"
 FEEDBACK_STATUSES = {
@@ -335,11 +340,14 @@ for key, default in (
     ("session_id", str(uuid4())),
     ("completed_events", []),
     ("last_reflection", None),
+    ("reminder_consent_reflection_id", None),
 ):
     if key not in st.session_state:
         st.session_state[key] = default
 
 _render_notice()
+render_due_motivation_reminders(API_URL, USER_ID)
+render_reflection_reminder_offer(API_URL, USER_ID)
 
 for index, message in enumerate(st.session_state.messages):
     with st.chat_message(message["role"]):
@@ -442,6 +450,7 @@ with col1:
         st.session_state.pending_feedback_id = None
         st.session_state.feedback_notice = None
         st.session_state.session_id = str(uuid4())
+        st.session_state.reminder_consent_reflection_id = None
         st.rerun()
 
 with col2:
