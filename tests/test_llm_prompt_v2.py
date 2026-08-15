@@ -1,5 +1,6 @@
 import json
 import unittest
+from pathlib import Path
 from unittest.mock import Mock, patch
 
 from app.services import llm_service
@@ -32,20 +33,34 @@ class LlmPromptV2Tests(unittest.TestCase):
         self.assertIn("delete bez wystarczających kryteriów -> needs_input", prompt)
         self.assertIn("cancelled -> cancelled", prompt)
 
-    def test_static_few_shots_cover_observed_baseline_error_classes(self):
+    def test_static_few_shots_cover_observed_error_classes_with_paraphrases(self):
         joined = "\n".join(item["content"] for item in llm_service.STATIC_FEW_SHOT_MESSAGES)
         for fragment in (
-            "dwie godziny nauki",
+            "dwie godziny pisania pracy",
             "90 minut",
             "jutro wieczorem",
-            "godzinę czytania o 20",
-            "czy mam jutro coś z dentystą",
-            "wywal mi trening",
-            "w kinie",
-            "hej, co tam",
+            "godzinę medytacji o 21",
+            "wizytę u lekarza",
+            "skasuj mi zebranie",
+            "w telewizji",
+            "jak leci",
+            "anuluj to",
         ):
             with self.subTest(fragment=fragment):
                 self.assertIn(fragment, joined)
+
+    def test_static_few_shots_do_not_copy_frozen_nlp_dataset_messages(self):
+        project_root = Path(__file__).resolve().parents[1]
+        dataset = json.loads(
+            (project_root / "benchmarks" / "nlp_quality_v1.json").read_text(encoding="utf-8")
+        )
+        static_user_messages = {
+            item["content"]
+            for item in llm_service.STATIC_FEW_SHOT_MESSAGES
+            if item["role"] == "user"
+        }
+        frozen_messages = {case["message"] for case in dataset}
+        self.assertFalse(static_user_messages & frozen_messages)
 
     def test_ask_llm_sends_static_few_shots_before_current_message(self):
         response = Mock()
