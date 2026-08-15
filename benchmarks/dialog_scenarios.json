@@ -51,6 +51,27 @@
     ]
   },
   {
+    "id": "create_cancel_natural_phrase",
+    "category": "create_cancel",
+    "turns": [
+      {
+        "message": "dodaj trening jutro o 17",
+        "expected_status": "needs_input",
+        "expected_event": {
+          "operation": "create",
+          "title": "trening",
+          "date_hint": "jutro",
+          "time_hint": "17:00"
+        },
+        "forbidden_event_fields": ["duration_minutes"]
+      },
+      {
+        "message": "albo nieważne jednak",
+        "expected_status": "cancelled"
+      }
+    ]
+  },
+  {
     "id": "create_llm_fallback_two_missing",
     "category": "create_llm_fallback",
     "turns": [
