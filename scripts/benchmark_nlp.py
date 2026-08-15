@@ -1,8 +1,7 @@
-"""Evaluate OrganizerAI NLP quality without executing Calendar operations.
+"""Evaluate OrganizerAI semantic NLU and optional deterministic dialog policy.
 
-This runner calls the structured LLM adapter directly. It therefore measures the
-NLP/ML interpretation layer (including verified-example retrieval) rather than
-backend deterministic fast paths or Google Calendar latency.
+Raw mode measures Mistral semantic extraction. Deterministic mode applies the
+same policy used by runtime after the model, without executing Calendar calls.
 """
 
 from __future__ import annotations
@@ -22,7 +21,8 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from app.services.llm_service import ask_llm
+from app.services.dialog_policy import apply_dialog_policy
+from app.services.llm_service import ask_llm_semantic
 
 DEFAULT_DATASET = PROJECT_ROOT / "benchmarks" / "nlp_quality_v1.json"
 DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "benchmark_results"
@@ -211,6 +211,38 @@ def _pct(correct: int, total: int) -> float:
     return round(100.0 * correct / total, 2) if total else 100.0
 
 
+def _empty_failed_validation(case: dict, error: str) -> dict:
+    counts = _expected_counts(case)
+    return {
+        "passed": False,
+        "errors": [error],
+        "intent_total": counts["intent_total"],
+        "intent_correct": 0,
+        "status_total": counts["status_total"],
+        "status_correct": 0,
+        "slot_total": counts["slot_total"],
+        "slot_correct": 0,
+        "hallucination_total": counts["hallucination_total"],
+        "hallucination_correct": 0,
+    }
+
+
+def _accumulate(target, validation: dict) -> None:
+    target["evaluations"] += 1
+    target["passed"] += int(validation["passed"])
+    for metric in (
+        "intent_total",
+        "intent_correct",
+        "status_total",
+        "status_correct",
+        "slot_total",
+        "slot_correct",
+        "hallucination_total",
+        "hallucination_correct",
+    ):
+        target[metric] += validation[metric]
+
+
 def run_nlp_benchmark(
     *,
     dataset_path: Path,
@@ -218,9 +250,12 @@ def run_nlp_benchmark(
     runs: int,
     output_dir: Path,
     version: str,
+    policy_mode: str = "raw",
 ) -> dict:
     if runs <= 0:
         raise ValueError("runs must be greater than zero")
+    if policy_mode not in {"raw", "deterministic"}:
+        raise ValueError("policy_mode must be 'raw' or 'deterministic'")
 
     cases = json.loads(dataset_path.read_text(encoding="utf-8"))
     batch_id = uuid4().hex[:8]
@@ -229,12 +264,14 @@ def run_nlp_benchmark(
     latencies: list[float] = []
 
     totals = defaultdict(int)
+    raw_totals = defaultdict(int)
     category_totals: dict[str, defaultdict[str, int]] = defaultdict(
         lambda: defaultdict(int)
     )
 
     print(f"NLP benchmark: {version}")
     print(f"Dataset: {dataset_path}")
+    print(f"Policy mode: {policy_mode}")
     print(f"Cases: {len(cases)}; runs: {runs}; total evaluations: {len(cases) * runs}")
     print(f"User/retrieval context: {user_id}")
     print(f"Batch: {batch_id}")
@@ -245,52 +282,38 @@ def run_nlp_benchmark(
         for case in cases:
             started = time.perf_counter()
             try:
-                result = ask_llm(
+                raw_result = ask_llm_semantic(
                     message=case["message"],
                     history=case.get("history", []),
                     draft_event=case.get("draft_event"),
                     user_id=user_id,
                 )
                 latency_ms = (time.perf_counter() - started) * 1000
+                raw_validation = _validate_case(case, raw_result)
+                result = (
+                    apply_dialog_policy(
+                        case["message"],
+                        raw_result,
+                        current_state=case.get("draft_event"),
+                    )
+                    if policy_mode == "deterministic"
+                    else raw_result
+                )
                 validation = _validate_case(case, result)
                 exception = None
             except Exception as exc:
                 latency_ms = (time.perf_counter() - started) * 1000
+                raw_result = None
                 result = None
                 exception = f"{type(exc).__name__}: {exc}"
-                counts = _expected_counts(case)
-                validation = {
-                    "passed": False,
-                    "errors": [exception],
-                    "intent_total": counts["intent_total"],
-                    "intent_correct": 0,
-                    "status_total": counts["status_total"],
-                    "status_correct": 0,
-                    "slot_total": counts["slot_total"],
-                    "slot_correct": 0,
-                    "hallucination_total": counts["hallucination_total"],
-                    "hallucination_correct": 0,
-                }
+                raw_validation = _empty_failed_validation(case, exception)
+                validation = _empty_failed_validation(case, exception)
 
             latencies.append(latency_ms)
             category = str(case.get("category") or "other")
-            totals["evaluations"] += 1
-            totals["passed"] += int(validation["passed"])
-            category_totals[category]["evaluations"] += 1
-            category_totals[category]["passed"] += int(validation["passed"])
-
-            for metric in (
-                "intent_total",
-                "intent_correct",
-                "status_total",
-                "status_correct",
-                "slot_total",
-                "slot_correct",
-                "hallucination_total",
-                "hallucination_correct",
-            ):
-                totals[metric] += validation[metric]
-                category_totals[category][metric] += validation[metric]
+            _accumulate(totals, validation)
+            _accumulate(raw_totals, raw_validation)
+            _accumulate(category_totals[category], validation)
 
             state = "PASS" if validation["passed"] else "FAIL"
             print(f"  {state} {case['id']}  {latency_ms:.0f} ms")
@@ -312,6 +335,12 @@ def run_nlp_benchmark(
                         for key, value in validation.items()
                         if key not in {"passed", "errors"}
                     },
+                    "raw_validation": {
+                        key: value
+                        for key, value in raw_validation.items()
+                        if key not in {"passed", "errors"}
+                    },
+                    "raw_result": raw_result,
                     "result": result,
                     "exception": exception,
                 }
@@ -348,6 +377,13 @@ def run_nlp_benchmark(
         "avg_latency_ms": round(statistics.fmean(latencies), 2) if latencies else 0.0,
         "median_latency_ms": round(statistics.median(latencies), 2) if latencies else 0.0,
     }
+    raw_summary = {
+        "intent_accuracy_pct": _pct(raw_totals["intent_correct"], raw_totals["intent_total"]),
+        "slot_accuracy_pct": _pct(raw_totals["slot_correct"], raw_totals["slot_total"]),
+        "hallucination_free_pct": _pct(
+            raw_totals["hallucination_correct"], raw_totals["hallucination_total"]
+        ),
+    }
 
     payload = {
         "benchmark_version": version,
@@ -355,9 +391,11 @@ def run_nlp_benchmark(
         "dataset": str(dataset_path),
         "user_id": user_id,
         "runs": runs,
+        "policy_mode": policy_mode,
         "started_at_utc": started_at.isoformat(),
         "completed_at_utc": datetime.now(timezone.utc).isoformat(),
         "summary": summary,
+        "raw_semantic_summary": raw_summary,
         "category_summary": category_summary,
         "case_results": case_results,
     }
@@ -372,6 +410,11 @@ def run_nlp_benchmark(
     print(f"  status accuracy:     {summary['status_accuracy_pct']:.2f}%")
     print(f"  slot accuracy:       {summary['slot_accuracy_pct']:.2f}%")
     print(f"  hallucination-free:  {summary['hallucination_free_pct']:.2f}%")
+    if policy_mode == "deterministic":
+        print("Raw semantic NLU")
+        print(f"  raw intent accuracy:    {raw_summary['intent_accuracy_pct']:.2f}%")
+        print(f"  raw slot accuracy:      {raw_summary['slot_accuracy_pct']:.2f}%")
+        print(f"  raw hallucination-free: {raw_summary['hallucination_free_pct']:.2f}%")
     print(f"  avg LLM latency:     {summary['avg_latency_ms']:.0f} ms")
     print(f"  median LLM latency:  {summary['median_latency_ms']:.0f} ms")
     print(f"JSON result: {output_path}")
@@ -386,6 +429,12 @@ def main() -> int:
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
     parser.add_argument("--version", default="v1")
     parser.add_argument(
+        "--policy",
+        choices=("raw", "deterministic"),
+        default="raw",
+        help="Evaluate raw semantic NLU or semantic NLU after deterministic dialog policy.",
+    )
+    parser.add_argument(
         "--min-pass-rate",
         type=float,
         default=None,
@@ -399,6 +448,7 @@ def main() -> int:
         runs=args.runs,
         output_dir=args.output_dir,
         version=args.version,
+        policy_mode=args.policy,
     )
     if args.min_pass_rate is None:
         return 0
