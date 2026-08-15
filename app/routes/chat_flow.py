@@ -108,6 +108,55 @@ def _with_normalized_create_confirmation(request: ChatRequest, state: dict) -> C
     return _copy_request(request, message="tak")
 
 
+def _deterministic_create_fast_path(request: ChatRequest, state: dict) -> dict | None:
+    """Return a CREATE summary without LLM when all required slots are explicit.
+
+    This is intentionally conservative: partial or ambiguous messages still go
+    through the core router/LLM. A complete deterministic parse is safe to use
+    because the backend already owns validation and final Calendar confirmation.
+    """
+    is_create_context = state.get("operation") == "create" or bool(
+        chat.CREATE_INTENT_RE.search(request.message)
+    )
+    if not is_create_context:
+        return None
+
+    if state.get("operation") == "create" and (
+        _is_create_confirmation(request.message)
+        or chat._asks_if_create_was_committed(request.message)
+        or chat._asks_for_missing_create_data(request.message)
+    ):
+        return None
+
+    fields = chat._extract_create_fields(
+        request.message,
+        continuation=state.get("operation") == "create",
+    )
+    time_override = _extract_create_time_override(request.message, state)
+    if time_override:
+        fields["time_hint"] = time_override
+
+    if not fields:
+        return None
+
+    event = {
+        key: value
+        for key, value in state.items()
+        if key in {"title", "date_hint", "time_hint", "duration_minutes", "description"}
+    }
+    event.update(fields)
+    event["operation"] = "create"
+
+    if chat._missing_event(event):
+        return None
+
+    return {
+        "status": "ready_for_confirmation",
+        "message": chat._create_confirmation_message(event),
+        "event": event,
+    }
+
+
 def _session_id(request: ChatRequest) -> str:
     explicit = str(request.session_id or "").strip()
     if explicit:
@@ -231,6 +280,10 @@ def _chat_endpoint_inner(request: ChatRequest, started_at: float):
                 },
                 started_at,
             )
+
+    fast_path_result = _deterministic_create_fast_path(request, state)
+    if fast_path_result is not None:
+        return _finish(request, fast_path_result, started_at)
 
     delegated_request = _with_create_time_override(request, state)
     delegated_state = delegated_request.draft_event or state
