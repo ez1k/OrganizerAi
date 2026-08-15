@@ -71,6 +71,59 @@ class CreateDialogControlTests(unittest.TestCase):
         self.assertEqual(result["event"]["time_hint"], "16:00")
         self.assertEqual(result["event"]["duration_minutes"], 90)
 
+    def test_complete_explicit_create_bypasses_core_router(self):
+        with (
+            patch.object(chat_flow.chat, "chat_endpoint") as delegated,
+            patch.object(chat_flow.chat, "_create_confirmation_message", return_value="summary"),
+            patch.object(chat_flow, "save_chat_turn_metric"),
+        ):
+            result = chat_flow.chat_endpoint(
+                self._request("dodaj dentystę jutro o 18 na 45 min")
+            )
+
+        self.assertEqual(result["status"], "ready_for_confirmation")
+        self.assertEqual(result["message"], "summary")
+        self.assertEqual(result["event"]["title"], "dentystę")
+        self.assertEqual(result["event"]["date_hint"], "jutro")
+        self.assertEqual(result["event"]["time_hint"], "18:00")
+        self.assertEqual(result["event"]["duration_minutes"], 45)
+        delegated.assert_not_called()
+
+    def test_continuation_completing_last_slot_bypasses_core_router(self):
+        draft = self._draft()
+        draft.pop("duration_minutes")
+
+        with (
+            patch.object(chat_flow.chat, "chat_endpoint") as delegated,
+            patch.object(chat_flow.chat, "_create_confirmation_message", return_value="summary"),
+            patch.object(chat_flow, "save_chat_turn_metric"),
+        ):
+            result = chat_flow.chat_endpoint(self._request("45 min", draft))
+
+        self.assertEqual(result["status"], "ready_for_confirmation")
+        self.assertEqual(result["event"]["duration_minutes"], 45)
+        self.assertEqual(result["event"]["title"], "trening siłowy")
+        delegated.assert_not_called()
+
+    def test_incomplete_create_still_delegates_to_core_router(self):
+        delegated_result = {
+            "status": "needs_input",
+            "message": "O której godzinie?",
+            "event": {
+                "operation": "create",
+                "title": "dentystę",
+                "date_hint": "jutro",
+            },
+        }
+        with (
+            patch.object(chat_flow.chat, "chat_endpoint", return_value=delegated_result) as delegated,
+            patch.object(chat_flow, "save_chat_turn_metric"),
+        ):
+            result = chat_flow.chat_endpoint(self._request("dodaj dentystę jutro"))
+
+        self.assertEqual(result, delegated_result)
+        delegated.assert_called_once()
+
     def test_tak_dodaj_is_normalized_before_core_router(self):
         draft = self._draft()
         delegated_result = {
