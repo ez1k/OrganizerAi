@@ -19,19 +19,19 @@ from uuid import uuid4
 try:
     from scripts.benchmark_dialog import (
         DEFAULT_API_URL,
-        DEFAULT_SCENARIOS,
         DEFAULT_USER_ID,
         execute_benchmark,
     )
 except ModuleNotFoundError:
     from benchmark_dialog import (
         DEFAULT_API_URL,
-        DEFAULT_SCENARIOS,
         DEFAULT_USER_ID,
         execute_benchmark,
     )
 
-DEFAULT_OUTPUT_DIR = Path(__file__).resolve().parents[1] / "benchmark_results"
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_V1_SCENARIOS = PROJECT_ROOT / "benchmarks" / "dialog_scenarios_v1.json"
+DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "benchmark_results"
 
 
 def _percentile(values: list[float], quantile: float) -> float:
@@ -116,6 +116,7 @@ def run_repeated_benchmark(
     print(f"Benchmark version: {benchmark_version}")
     print(f"Batch: {batch_id}")
     print(f"Measured runs: {runs}; warm-up runs: {warmup_runs}")
+    print(f"Scenarios: {scenarios_path}")
     print(f"API: {api_url}")
     print()
 
@@ -164,6 +165,7 @@ def run_repeated_benchmark(
     scenario_summary = _scenario_summary(measured_results)
     payload = {
         "benchmark_version": benchmark_version,
+        "scenario_file": str(scenarios_path),
         "batch_id": batch_id,
         "sql_run_id_prefix": f"{batch_id}%",
         "started_at_utc": started_at.isoformat(),
@@ -199,7 +201,7 @@ def main() -> int:
     parser.add_argument("--warmup-runs", type=int, default=1)
     parser.add_argument("--api-url", default=DEFAULT_API_URL)
     parser.add_argument("--user-id", default=DEFAULT_USER_ID)
-    parser.add_argument("--scenarios", type=Path, default=DEFAULT_SCENARIOS)
+    parser.add_argument("--scenarios", type=Path, default=DEFAULT_V1_SCENARIOS)
     parser.add_argument("--timeout", type=int, default=130)
     parser.add_argument("--pause-seconds", type=float, default=0.2)
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
