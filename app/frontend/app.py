@@ -7,7 +7,7 @@ from uuid import uuid4
 import requests
 import streamlit as st
 
-from app.frontend.motivation_ui import (
+from motivation_ui import (
     render_due_motivation_reminders,
     render_reflection_reminder_offer,
 )
