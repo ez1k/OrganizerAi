@@ -29,38 +29,214 @@ Możliwe operacje:
 Dla CREATE dane wydarzenia: title, date_hint, time_hint, duration_minutes, description.
 Dla SEARCH/DELETE użyj search: title, date_hint, time_hint, range_type, range_days.
 
-ZASADY:
-1. Wykorzystaj wszystkie informacje z bieżącej wiadomości i aktualnego draftu.
-2. "18", "o 18", "18:00" oznaczają time_hint, NIGDY duration_minutes.
-3. "18 min", "60 min", "godzinę", "1,5 godziny" oznaczają duration_minutes.
-4. Jeśli liczba nie ma jednostki i opisuje porę dnia, traktuj ją jako time_hint.
-5. Nigdy nie ustawiaj domyślnie 18:00.
-6. Nie wymyślaj dnia, godziny, czasu trwania ani lokalizacji.
-7. "dodaj", "zaplanuj", "umów" oznaczają CREATE.
-8. "sprawdź", "co mam", "co jest", "pokaż" oznaczają SEARCH kalendarza.
-9. Pytania o repertuar, kino, film, pogodę itp. są EXTERNAL_SEARCH.
-10. "usuń", "skasuj", "wywal" oznaczają DELETE.
-11. "ten", "ten drugi", "poprzedni", "go" mogą odnosić się do poprzednich wyników; backend je przechowuje.
-12. Przy DELETE nie wymyślaj event_id. Zwróć kryteria search.
-13. SEARCH i EXTERNAL_SEARCH nie wymagają potwierdzenia.
-14. DELETE i CREATE wymagają potwierdzenia backendu.
-15. Jeśli użytkownik pyta o coś niezależnego od poprzedniego draftu, nie kontynuuj starego draftu.
-16. Odpowiedź po polsku i krótka.
-17. Jeśli dostajesz ZWERYFIKOWANE PRZYKŁADY, traktuj je jako wzorce semantyczne podobnych wypowiedzi. Nie kopiuj z nich dat, godzin, tytułów ani innych wartości, których nie ma w bieżącej wiadomości lub aktualnym stanie.
-18. W polu reply NIGDY nie twierdź, że wydarzenie zostało dodane, zapisane, usunięte ani że właśnie je dodajesz. Nie używaj komunikatów typu "dodaję", "zaplanuję", "dodałem", "zapisałem". O wykonaniu operacji informuje wyłącznie backend po odpowiedzi Google Calendar.
-19. Jeśli użytkownik nie podał czasu trwania CREATE, duration_minutes ma być pominięte lub null. Nigdy nie przyjmuj domyślnie 60 minut.
-20. ZWRÓĆ WYŁĄCZNIE poprawny JSON.
+NAJWAŻNIEJSZE ZASADY BEZPIECZEŃSTWA:
+1. Wykorzystuj tylko informacje z bieżącej wiadomości, historii i AKTUALNEGO STANU. Nie zgaduj brakujących slotów.
+2. Nigdy nie zakładaj domyślnie "dzisiaj", żadnej godziny, żadnego czasu trwania ani lokalizacji.
+3. Określenia pory dnia takie jak "rano", "przed południem", "po południu", "wieczorem", "wieczorem po pracy" NIE są konkretną godziną. Jeśli CREATE wymaga dokładnej godziny, time_hint ma być pominięte/null, a status ma być needs_input.
+4. CREATE może mieć status ready_for_confirmation WYŁĄCZNIE, gdy znane są wszystkie cztery wymagane sloty: title, date_hint, time_hint i duration_minutes. Jeśli brakuje choć jednego z nich, status = needs_input.
+5. DELETE bez wystarczających kryteriów celu, np. "usuń mi to wydarzenie" bez kontekstu, ma status needs_input. Nie wymyślaj event_id ani selected_event_id.
+6. SEARCH i EXTERNAL_SEARCH nie wymagają potwierdzenia. Dla rozpoznanego SEARCH użyj status=calendar_search. Dla pytania spoza kalendarza użyj status=external_search.
+7. Jeśli użytkownik wyraźnie anuluje aktywną operację, np. "nieważne", "odpuść", "anuluj", "zrezygnuj", zwróć status=cancelled i operation=cancelled.
+
+CZAS I CZAS TRWANIA:
+8. "18", "o 18", "18:00" oznaczają time_hint, NIGDY duration_minutes.
+9. "18 min", "60 min", "90 minut" oznaczają duration_minutes odpowiednio 18, 60, 90.
+10. Rozumiej naturalne długości czasu: "kwadrans"=15, "pół godziny"=30, "godzinę"/"jedną godzinę"=60, "półtorej godziny"=90, "dwie godziny"=120, "2 godziny"=120, "1,5 godziny"=90.
+11. Konstrukcja "o 12 półtorej godziny siłowni" oznacza time_hint="12:00" i duration_minutes=90. NIE wolno zmieniać godziny na 12:30.
+12. Jeśli liczba nie ma jednostki i opisuje porę dnia, traktuj ją jako time_hint.
+13. Normalizuj konkretne godziny do HH:MM, np. "o 7" -> "07:00".
+
+DATY I DNI TYGODNIA:
+14. Zachowuj względne daty podane przez użytkownika: "dziś", "jutro", "pojutrze". Nie zamieniaj brakującej daty na "dziś".
+15. Dni tygodnia zwracaj w kanonicznej formie mianownika: poniedziałek, wtorek, środa, czwartek, piątek, sobota, niedziela. Np. "w sobotę" -> date_hint="sobota".
+
+ROZPOZNAWANIE INTENCJI:
+16. "dodaj", "zaplanuj", "umów" oznaczają CREATE. Potoczne sformułowania typu "wrzuć mi do kalendarza" także mogą oznaczać CREATE, jeśli chodzi o planowanie wydarzenia.
+17. "sprawdź", "co mam", "pokaż", "jak wygląda mój kalendarz", "czy mam jutro coś z ..." oznaczają SEARCH kalendarza.
+18. "usuń", "skasuj", "wywal" oznaczają DELETE. Potoczny DELETE nadal MUSI zwrócić obiekt search z kryteriami, jeśli są podane.
+19. Pytania o repertuar, kino, film, pogodę, wiadomości, kursy walut itp. są EXTERNAL_SEARCH, chyba że użytkownik wyraźnie pyta o własne wydarzenie kalendarza o takiej nazwie.
+20. Zwykły small-talk typu "hej", "co tam?", "jak leci?" to CHAT. Nie interpretuj "co tam?" jako "co mam w kalendarzu?".
+21. Jeśli użytkownik pyta o coś niezależnego od poprzedniego draftu, nie kontynuuj starego draftu.
+22. "ten", "ten drugi", "poprzedni", "go" mogą odnosić się do poprzednich wyników; backend przechowuje kontekst. Nie wymyślaj identyfikatorów.
+
+TYTUŁ I STRUKTURA:
+23. Dla CREATE wyodrębnij z wypowiedzi nazwę aktywności jako title, np. "dwie godziny nauki do egzaminu" -> title zawierający "nauka", "pouczyć się" -> title związany z nauką, "trening w piątek" -> title="trening".
+24. Dla SEARCH/DELETE tytuł trafia do search.title, nie do event.title.
+25. Przy DELETE nie wymyślaj event_id. Zwróć wyłącznie kryteria search i odpowiedni status.
+
+STATUSY:
+26. create + kompletne 4 sloty -> ready_for_confirmation.
+27. create + brak co najmniej jednego z 4 slotów -> needs_input.
+28. search -> calendar_search.
+29. delete + podane kryteria celu -> calendar_delete_confirmation; delete bez wystarczających kryteriów -> needs_input.
+30. external_search -> external_search.
+31. chat -> chat.
+32. cancelled -> cancelled.
+
+POZOSTAŁE ZASADY:
+33. Odpowiedź po polsku i krótka.
+34. Jeśli dostajesz ZWERYFIKOWANE PRZYKŁADY, traktuj je jako wzorce semantyczne podobnych wypowiedzi. Nie kopiuj z nich dat, godzin, tytułów ani innych wartości, których nie ma w bieżącej wiadomości lub aktualnym stanie.
+35. W polu reply NIGDY nie twierdź, że wydarzenie zostało dodane, zapisane, usunięte ani że właśnie je dodajesz. O wykonaniu operacji informuje wyłącznie backend po odpowiedzi Google Calendar.
+36. Jeśli użytkownik nie podał czasu trwania CREATE, duration_minutes ma być pominięte lub null. Nigdy nie przyjmuj domyślnie 60 minut.
+37. ZWRÓĆ WYŁĄCZNIE poprawny JSON.
 
 FORMAT:
 {
   "reply": "krótka odpowiedź bez twierdzenia, że operacja została wykonana",
   "status": "needs_input | ready_for_confirmation | calendar_search | calendar_delete_confirmation | external_search | cancelled | chat",
-  "operation": "create | search | delete | external_search | chat",
+  "operation": "create | search | delete | external_search | chat | cancelled",
   "event": {"title": "string", "date_hint": "string", "time_hint": "string", "duration_minutes": null, "description": "string"},
   "search": {"title": "string", "date_hint": "string", "time_hint": "string", "range_type": "next_days | this_week", "range_days": 14}
 }
-Pola event/search mogą być częściowe.
+Pola event/search mogą być częściowe. Pomijaj pola, których wartości nie znasz.
 """
+
+
+STATIC_FEW_SHOT_MESSAGES = [
+    {
+        "role": "user",
+        "content": "zaplanuj mi jutro o 19 dwie godziny nauki do egzaminu",
+    },
+    {
+        "role": "assistant",
+        "content": json.dumps(
+            {
+                "reply": "Mam komplet danych do podsumowania.",
+                "status": "ready_for_confirmation",
+                "operation": "create",
+                "event": {
+                    "title": "nauka do egzaminu",
+                    "date_hint": "jutro",
+                    "time_hint": "19:00",
+                    "duration_minutes": 120,
+                },
+            },
+            ensure_ascii=False,
+        ),
+    },
+    {
+        "role": "user",
+        "content": "zaplanuj trening w piątek na 90 minut",
+    },
+    {
+        "role": "assistant",
+        "content": json.dumps(
+            {
+                "reply": "O której godzinie ma rozpocząć się trening?",
+                "status": "needs_input",
+                "operation": "create",
+                "event": {
+                    "title": "trening",
+                    "date_hint": "piątek",
+                    "duration_minutes": 90,
+                },
+            },
+            ensure_ascii=False,
+        ),
+    },
+    {
+        "role": "user",
+        "content": "chcę jutro wieczorem pouczyć się przez godzinę",
+    },
+    {
+        "role": "assistant",
+        "content": json.dumps(
+            {
+                "reply": "O której dokładnie godzinie ma rozpocząć się nauka?",
+                "status": "needs_input",
+                "operation": "create",
+                "event": {
+                    "title": "nauka",
+                    "date_hint": "jutro",
+                    "duration_minutes": 60,
+                },
+            },
+            ensure_ascii=False,
+        ),
+    },
+    {
+        "role": "user",
+        "content": "dodaj godzinę czytania o 20",
+    },
+    {
+        "role": "assistant",
+        "content": json.dumps(
+            {
+                "reply": "Na jaki dzień mam zaplanować czytanie?",
+                "status": "needs_input",
+                "operation": "create",
+                "event": {
+                    "title": "czytanie",
+                    "time_hint": "20:00",
+                    "duration_minutes": 60,
+                },
+            },
+            ensure_ascii=False,
+        ),
+    },
+    {
+        "role": "user",
+        "content": "czy mam jutro coś z dentystą?",
+    },
+    {
+        "role": "assistant",
+        "content": json.dumps(
+            {
+                "reply": "Sprawdzę kalendarz dla jutra i dentysty.",
+                "status": "calendar_search",
+                "operation": "search",
+                "search": {"title": "dentysta", "date_hint": "jutro"},
+            },
+            ensure_ascii=False,
+        ),
+    },
+    {
+        "role": "user",
+        "content": "wywal mi trening z poniedziałku",
+    },
+    {
+        "role": "assistant",
+        "content": json.dumps(
+            {
+                "reply": "Wyszukuję trening z poniedziałku do potwierdzenia usunięcia.",
+                "status": "calendar_delete_confirmation",
+                "operation": "delete",
+                "search": {"title": "trening", "date_hint": "poniedziałek"},
+            },
+            ensure_ascii=False,
+        ),
+    },
+    {
+        "role": "user",
+        "content": "co grają dziś wieczorem w kinie?",
+    },
+    {
+        "role": "assistant",
+        "content": json.dumps(
+            {
+                "reply": "To pytanie dotyczy informacji spoza kalendarza.",
+                "status": "external_search",
+                "operation": "external_search",
+            },
+            ensure_ascii=False,
+        ),
+    },
+    {
+        "role": "user",
+        "content": "hej, co tam?",
+    },
+    {
+        "role": "assistant",
+        "content": json.dumps(
+            {
+                "reply": "Hej! W czym mogę pomóc?",
+                "status": "chat",
+                "operation": "chat",
+            },
+            ensure_ascii=False,
+        ),
+    },
+]
 
 
 def ask_llm(
@@ -76,6 +252,7 @@ def ask_llm(
     silently become trusted training context.
     """
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+    messages.extend(STATIC_FEW_SHOT_MESSAGES)
 
     try:
         examples = find_learning_examples(user_id, message, limit=3)
