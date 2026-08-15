@@ -13,6 +13,7 @@ class ChatRequest(BaseModel):
     history: list[ChatMessage] = Field(default_factory=list)
     draft_event: dict[str, Any] | None = None
     user_id: str = "local-user"
+    session_id: str | None = None
 
 
 class FeedbackRequest(BaseModel):
