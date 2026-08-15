@@ -1,0 +1,396 @@
+[
+  {
+    "id": "create_complete_natural_study",
+    "category": "create_complete",
+    "message": "zaplanuj mi jutro o 19 dwie godziny nauki do egzaminu",
+    "expected": {
+      "operation": "create",
+      "status": "ready_for_confirmation",
+      "event": {
+        "equals": {
+          "date_hint": "jutro",
+          "time_hint": "19:00",
+          "duration_minutes": 120
+        },
+        "contains": {
+          "title": ["nauk"]
+        }
+      }
+    }
+  },
+  {
+    "id": "create_complete_dentist",
+    "category": "create_complete",
+    "message": "umów dentystę we wtorek o 14 na 45 minut",
+    "expected": {
+      "operation": "create",
+      "status": "ready_for_confirmation",
+      "event": {
+        "equals": {
+          "date_hint": "wtorek",
+          "time_hint": "14:00",
+          "duration_minutes": 45
+        },
+        "contains": {
+          "title": ["dentyst"]
+        }
+      }
+    }
+  },
+  {
+    "id": "create_complete_colloquial_gym",
+    "category": "create_complete",
+    "message": "wrzuć mi na sobotę o 12 półtorej godziny siłowni",
+    "expected": {
+      "operation": "create",
+      "status": "ready_for_confirmation",
+      "event": {
+        "equals": {
+          "date_hint": "sobota",
+          "time_hint": "12:00",
+          "duration_minutes": 90
+        },
+        "contains": {
+          "title": ["silown"]
+        }
+      }
+    }
+  },
+  {
+    "id": "create_complete_explicit_date",
+    "category": "create_complete",
+    "message": "dodaj rozmowę z promotorem 18.08.2026 o 10:30 na godzinę",
+    "expected": {
+      "operation": "create",
+      "status": "ready_for_confirmation",
+      "event": {
+        "equals": {
+          "date_hint": "18.08.2026",
+          "time_hint": "10:30",
+          "duration_minutes": 60
+        },
+        "contains": {
+          "title": ["promotor"]
+        }
+      }
+    }
+  },
+  {
+    "id": "create_missing_duration",
+    "category": "create_missing",
+    "message": "dodaj spotkanie z Anią jutro o 18",
+    "expected": {
+      "operation": "create",
+      "status": "needs_input",
+      "event": {
+        "equals": {
+          "date_hint": "jutro",
+          "time_hint": "18:00"
+        },
+        "contains": {
+          "title": ["ania"]
+        },
+        "missing": ["duration_minutes"]
+      }
+    }
+  },
+  {
+    "id": "create_missing_time",
+    "category": "create_missing",
+    "message": "zaplanuj trening w piątek na 90 minut",
+    "expected": {
+      "operation": "create",
+      "status": "needs_input",
+      "event": {
+        "equals": {
+          "date_hint": "piątek",
+          "duration_minutes": 90
+        },
+        "contains": {
+          "title": ["trening"]
+        },
+        "missing": ["time_hint"]
+      }
+    }
+  },
+  {
+    "id": "create_missing_date",
+    "category": "create_missing",
+    "message": "dodaj godzinę czytania o 20",
+    "expected": {
+      "operation": "create",
+      "status": "needs_input",
+      "event": {
+        "equals": {
+          "time_hint": "20:00",
+          "duration_minutes": 60
+        },
+        "contains": {
+          "title": ["czytan"]
+        },
+        "missing": ["date_hint"]
+      }
+    }
+  },
+  {
+    "id": "create_vague_evening_no_invented_time",
+    "category": "create_missing",
+    "message": "chcę jutro wieczorem pouczyć się przez godzinę",
+    "expected": {
+      "operation": "create",
+      "status": "needs_input",
+      "event": {
+        "equals": {
+          "date_hint": "jutro",
+          "duration_minutes": 60
+        },
+        "contains": {
+          "title": ["nauk", "uczyc"]
+        },
+        "missing": ["time_hint"]
+      }
+    }
+  },
+  {
+    "id": "context_create_change_time",
+    "category": "context",
+    "message": "jednak o 18:30",
+    "draft_event": {
+      "operation": "create",
+      "title": "trening",
+      "date_hint": "jutro",
+      "time_hint": "17:00",
+      "duration_minutes": 90
+    },
+    "expected": {
+      "operation": "create",
+      "status": "ready_for_confirmation",
+      "event": {
+        "equals": {
+          "time_hint": "18:30"
+        }
+      }
+    }
+  },
+  {
+    "id": "context_create_change_day_and_time",
+    "category": "context",
+    "message": "przenieśmy to na piątek o 20",
+    "draft_event": {
+      "operation": "create",
+      "title": "nauka",
+      "date_hint": "jutro",
+      "time_hint": "18:00",
+      "duration_minutes": 60
+    },
+    "expected": {
+      "operation": "create",
+      "status": "ready_for_confirmation",
+      "event": {
+        "equals": {
+          "date_hint": "piątek",
+          "time_hint": "20:00"
+        }
+      }
+    }
+  },
+  {
+    "id": "context_cancel_active_create",
+    "category": "context",
+    "message": "w sumie nieważne, odpuśćmy to",
+    "draft_event": {
+      "operation": "create",
+      "title": "nauka",
+      "date_hint": "jutro",
+      "time_hint": "18:00",
+      "duration_minutes": 60
+    },
+    "expected": {
+      "status": "cancelled"
+    }
+  },
+  {
+    "id": "context_external_breaks_create",
+    "category": "context",
+    "message": "a jaka będzie jutro pogoda?",
+    "draft_event": {
+      "operation": "create",
+      "title": "nauka",
+      "date_hint": "jutro",
+      "time_hint": "18:00"
+    },
+    "expected": {
+      "operation": "external_search",
+      "status": "external_search"
+    }
+  },
+  {
+    "id": "search_tomorrow",
+    "category": "search",
+    "message": "co ja właściwie mam jutro w kalendarzu?",
+    "expected": {
+      "operation": "search",
+      "status": "calendar_search",
+      "search": {
+        "equals": {
+          "date_hint": "jutro"
+        }
+      }
+    }
+  },
+  {
+    "id": "search_specific_time",
+    "category": "search",
+    "message": "sprawdź czy mam coś w poniedziałek o 18",
+    "expected": {
+      "operation": "search",
+      "status": "calendar_search",
+      "search": {
+        "equals": {
+          "date_hint": "poniedziałek",
+          "time_hint": "18:00"
+        }
+      }
+    }
+  },
+  {
+    "id": "search_two_weeks_natural",
+    "category": "search",
+    "message": "pokaż mi plan na najbliższe dwa tygodnie",
+    "expected": {
+      "operation": "search",
+      "status": "calendar_search",
+      "search": {
+        "equals": {
+          "range_type": "next_days",
+          "range_days": 14
+        }
+      }
+    }
+  },
+  {
+    "id": "search_this_week_natural",
+    "category": "search",
+    "message": "jak wygląda mój kalendarz w tym tygodniu?",
+    "expected": {
+      "operation": "search",
+      "status": "calendar_search",
+      "search": {
+        "equals": {
+          "range_type": "this_week"
+        }
+      }
+    }
+  },
+  {
+    "id": "search_title_and_day",
+    "category": "search",
+    "message": "czy mam jutro coś z dentystą?",
+    "expected": {
+      "operation": "search",
+      "status": "calendar_search",
+      "search": {
+        "equals": {
+          "date_hint": "jutro"
+        },
+        "contains": {
+          "title": ["dentyst"]
+        }
+      }
+    }
+  },
+  {
+    "id": "delete_explicit",
+    "category": "delete",
+    "message": "usuń dentystę jutro o 18",
+    "expected": {
+      "operation": "delete",
+      "status": "calendar_delete_confirmation",
+      "search": {
+        "equals": {
+          "date_hint": "jutro",
+          "time_hint": "18:00"
+        },
+        "contains": {
+          "title": ["dentyst"]
+        }
+      }
+    },
+    "forbidden_keys_anywhere": ["event_id", "selected_event_id"]
+  },
+  {
+    "id": "delete_colloquial",
+    "category": "delete",
+    "message": "wywal mi trening z poniedziałku",
+    "expected": {
+      "operation": "delete",
+      "status": "calendar_delete_confirmation",
+      "search": {
+        "equals": {
+          "date_hint": "poniedziałek"
+        },
+        "contains": {
+          "title": ["trening"]
+        }
+      }
+    },
+    "forbidden_keys_anywhere": ["event_id", "selected_event_id"]
+  },
+  {
+    "id": "delete_anaphora_second",
+    "category": "delete",
+    "message": "usuń ten drugi",
+    "draft_event": {
+      "operation": "delete",
+      "search": {
+        "title": "trening"
+      },
+      "matches": [
+        {"id": "candidate-1", "title": "trening"},
+        {"id": "candidate-2", "title": "trening"}
+      ]
+    },
+    "expected": {
+      "operation": "delete",
+      "status": "calendar_delete_confirmation"
+    },
+    "forbidden_keys_anywhere": ["event_id", "selected_event_id"]
+  },
+  {
+    "id": "delete_missing_target",
+    "category": "delete",
+    "message": "usuń mi to wydarzenie",
+    "expected": {
+      "operation": "delete",
+      "status": "calendar_delete_confirmation"
+    },
+    "forbidden_keys_anywhere": ["event_id", "selected_event_id"]
+  },
+  {
+    "id": "external_weather",
+    "category": "external",
+    "message": "jaka będzie jutro pogoda w Warszawie?",
+    "expected": {
+      "operation": "external_search",
+      "status": "external_search"
+    }
+  },
+  {
+    "id": "external_cinema",
+    "category": "external",
+    "message": "co grają dziś wieczorem w kinie?",
+    "expected": {
+      "operation": "external_search",
+      "status": "external_search"
+    }
+  },
+  {
+    "id": "chat_greeting",
+    "category": "chat",
+    "message": "hej, co tam?",
+    "expected": {
+      "operation": "chat",
+      "status": "chat"
+    }
+  }
+]
