@@ -47,6 +47,39 @@ class DeleteFlowTests(unittest.TestCase):
         self.assertEqual(result["event"]["matches"], [event])
         delete_event_mock.assert_not_called()
 
+    def test_deterministic_delete_fast_path_strips_trailing_day(self):
+        event = self._event(title="dentystę")
+
+        with (
+            patch.object(chat_flow.chat, "_search_calendar", return_value=[event]) as search_mock,
+            patch.object(chat_flow.chat, "chat_endpoint") as delegated,
+            patch.object(chat_flow, "save_chat_turn_metric"),
+        ):
+            result = chat_flow.chat_endpoint(self._request("usuń dentystę jutro"))
+
+        self.assertEqual(result["status"], "calendar_delete_confirmation")
+        self.assertEqual(result["event"]["operation"], "delete")
+        criteria = search_mock.call_args.args[0]
+        self.assertEqual(criteria["title"], "dentystę")
+        self.assertEqual(criteria["date_hint"], "jutro")
+        delegated.assert_not_called()
+
+    def test_deterministic_delete_no_match_bypasses_llm(self):
+        with (
+            patch.object(chat_flow.chat, "_search_calendar", return_value=[]),
+            patch.object(chat_flow.chat, "chat_endpoint") as delegated,
+            patch.object(chat_flow, "save_chat_turn_metric") as save_metric,
+        ):
+            result = chat_flow.chat_endpoint(
+                self._request("usuń wydarzenie benchmark-nieistniejace-7f3a jutro")
+            )
+
+        self.assertEqual(result["status"], "calendar_delete_not_found")
+        self.assertIsNone(result["event"])
+        delegated.assert_not_called()
+        self.assertEqual(save_metric.call_args.kwargs["operation"], "delete")
+        self.assertEqual(save_metric.call_args.kwargs["llm_calls"], 0)
+
     def test_number_selection_reduces_multiple_matches_without_delete(self):
         first = self._event("event-1", "dentysta", 17)
         second = self._event("event-2", "dentysta", 18)
