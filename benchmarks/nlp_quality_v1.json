@@ -362,7 +362,7 @@
     "message": "usuń mi to wydarzenie",
     "expected": {
       "operation": "delete",
-      "status": "calendar_delete_confirmation"
+      "status": "needs_input"
     },
     "forbidden_keys_anywhere": ["event_id", "selected_event_id"]
   },
