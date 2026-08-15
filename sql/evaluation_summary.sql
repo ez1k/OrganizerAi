@@ -1,4 +1,5 @@
--- 1. Wydajność i odsetek doprecyzowań per operacja.
+-- 1. Wydajność całkowita i odsetek doprecyzowań per operacja.
+-- Ten raport może obejmować także historyczne rekordy sprzed instrumentacji komponentów.
 WITH measured AS (
     SELECT
         operation,
@@ -22,6 +23,33 @@ GROUP BY operation
 ORDER BY operation;
 GO
 
+-- 1b. Rozkład czasu między komponenty.
+-- timing_version >= 1 gwarantuje, że rekord powstał już po włączeniu instrumentacji.
+SELECT
+    operation,
+    COUNT(*) AS instrumented_turns,
+    SUM(CASE WHEN llm_calls > 0 THEN 1 ELSE 0 END) AS turns_using_llm,
+    SUM(CASE WHEN calendar_calls > 0 THEN 1 ELSE 0 END) AS turns_using_calendar,
+    SUM(llm_calls) AS llm_calls,
+    SUM(calendar_calls) AS calendar_calls,
+    CAST(AVG(CAST(latency_ms AS FLOAT)) AS DECIMAL(10,2)) AS avg_total_ms,
+    CAST(AVG(CAST(backend_latency_ms AS FLOAT)) AS DECIMAL(10,2)) AS avg_backend_ms,
+    CAST(AVG(CASE WHEN llm_calls > 0 THEN CAST(llm_latency_ms AS FLOAT) END) AS DECIMAL(10,2))
+        AS avg_llm_ms_when_used,
+    CAST(AVG(CASE WHEN calendar_calls > 0 THEN CAST(calendar_latency_ms AS FLOAT) END) AS DECIMAL(10,2))
+        AS avg_calendar_ms_when_used,
+    CAST(100.0 * SUM(CAST(llm_latency_ms AS BIGINT)) / NULLIF(SUM(CAST(latency_ms AS BIGINT)), 0) AS DECIMAL(6,2))
+        AS llm_time_share_pct,
+    CAST(100.0 * SUM(CAST(calendar_latency_ms AS BIGINT)) / NULLIF(SUM(CAST(latency_ms AS BIGINT)), 0) AS DECIMAL(6,2))
+        AS calendar_time_share_pct,
+    CAST(100.0 * SUM(CAST(backend_latency_ms AS BIGINT)) / NULLIF(SUM(CAST(latency_ms AS BIGINT)), 0) AS DECIMAL(6,2))
+        AS backend_time_share_pct
+FROM dbo.chat_turn_metrics
+WHERE timing_version >= 1
+GROUP BY operation
+ORDER BY operation;
+GO
+
 -- 2. Przebieg sesji: liczba turnów, doprecyzowań i sposób zakończenia.
 -- reached_action_success oznacza wykonaną akcję / zakończone wyszukiwanie.
 -- resolved_state obejmuje także świadome anulowanie przez użytkownika.
@@ -36,7 +64,10 @@ SELECT
     MAX(CASE WHEN status IN ('confirmed', 'deleted', 'calendar_search', 'cancelled') THEN 1 ELSE 0 END)
         AS resolved_state,
     MAX(CASE WHEN status = 'cancelled' THEN 1 ELSE 0 END) AS cancelled_by_user,
-    MAX(CASE WHEN status = 'error' THEN 1 ELSE 0 END) AS had_error
+    MAX(CASE WHEN status = 'error' THEN 1 ELSE 0 END) AS had_error,
+    SUM(CASE WHEN timing_version >= 1 THEN llm_latency_ms ELSE 0 END) AS measured_llm_ms,
+    SUM(CASE WHEN timing_version >= 1 THEN calendar_latency_ms ELSE 0 END) AS measured_calendar_ms,
+    SUM(CASE WHEN timing_version >= 1 THEN backend_latency_ms ELSE 0 END) AS measured_backend_ms
 FROM dbo.chat_turn_metrics
 GROUP BY session_id
 ORDER BY started_at_utc DESC;
