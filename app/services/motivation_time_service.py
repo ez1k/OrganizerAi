@@ -18,8 +18,6 @@ WARSAW = ZoneInfo("Europe/Warsaw")
 _NUMBER_WORDS = {
     "jeden": 1,
     "jedna": 1,
-    "jedna": 1,
-    "jedna": 1,
     "dwa": 2,
     "dwie": 2,
     "trzy": 3,
@@ -95,7 +93,7 @@ def parse_motivation_reminder_time(
         match = re.search(
             rf"\bza\s+(\d+|{_NUMBER_PATTERN})\s+"
             r"(minut(?:e|y)?|godzin(?:e|y)?|dni|dzien|"
-            r"tygodni(?:e)?|miesiac(?:e|y)?|miesiecy)\b",
+            r"tydzien|tygodnie|tygodni|miesiac|miesiace|miesiecy)\b",
             text,
         )
         if not match:
@@ -115,7 +113,7 @@ def parse_motivation_reminder_time(
             target = base + timedelta(hours=amount)
         elif unit in {"dzien", "dni"}:
             target = base + timedelta(days=amount)
-        elif unit.startswith("tygodni"):
+        elif unit in {"tydzien", "tygodnie", "tygodni"}:
             target = base + timedelta(weeks=amount)
         else:
             target = _add_months(base, amount)
