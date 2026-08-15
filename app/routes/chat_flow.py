@@ -32,6 +32,18 @@ CREATE_CONFIRM_RE = re.compile(
     r"no\s+dodaj|dawaj|dodawaj|dodaj(?:\s+to)?|zapisz(?:\s+to)?)\s*[.!]?\s*$",
     re.I,
 )
+DELETE_CONFIRM_RE = re.compile(
+    r"^\s*(?:tak(?:\s*,?\s*(?:usuń|usun|skasuj|wywal)(?:\s+to)?)?|"
+    r"potwierdzam|potwierdź|potwierdz|zgadza\s+się|zgadza\s+sie)\s*[.!]?\s*$",
+    re.I,
+)
+DELETE_CANCEL_RE = re.compile(
+    r"^\s*(?:(?:a|albo|dobra|no|to|w\s+sumie)\s*[,\-]?\s+)*"
+    r"(?:nie(?:\s+teraz)?|jednak\s+nie|nie\s+usuwaj|anuluj(?:\s+to)?|"
+    r"nieważne|niewazne|odpuść|odpusc|zrezygnuj)"
+    r"(?:\s*[,\-]?\s+(?:jednak|w\s+sumie|dobra))?\s*[.!]?\s*$",
+    re.I,
+)
 DUPLICATE_DECLINE_RE = re.compile(
     r"^\s*(?:a\s+)?(?:to\s+)?(?:w\s+takim\s+razie\s+)?(?:jednak\s+)?nie\s*[.!]?\s*$",
     re.I,
@@ -55,6 +67,14 @@ def _is_create_decline(message: str) -> bool:
 
 def _is_create_confirmation(message: str) -> bool:
     return bool(CREATE_CONFIRM_RE.fullmatch(str(message or "")))
+
+
+def _is_delete_confirmation(message: str) -> bool:
+    return bool(DELETE_CONFIRM_RE.fullmatch(str(message or "")))
+
+
+def _is_delete_cancel(message: str) -> bool:
+    return bool(DELETE_CANCEL_RE.fullmatch(str(message or "")))
 
 
 def _is_duplicate_decline(message: str) -> bool:
@@ -106,6 +126,13 @@ def _with_normalized_create_confirmation(request: ChatRequest, state: dict) -> C
     is normalized so phrases such as ``tak dodaj`` do not fall through to the LLM.
     """
     if state.get("operation") != "create" or not _is_create_confirmation(request.message):
+        return request
+    return _copy_request(request, message="tak")
+
+
+def _with_normalized_delete_confirmation(request: ChatRequest, state: dict) -> ChatRequest:
+    """Normalize only explicit DELETE confirmations to the core canonical ``tak``."""
+    if state.get("operation") != "delete" or not _is_delete_confirmation(request.message):
         return request
     return _copy_request(request, message="tak")
 
@@ -291,6 +318,32 @@ def _chat_endpoint_inner(request: ChatRequest, started_at: float):
                 started_at,
             )
 
+    if state.get("operation") == "delete":
+        if _is_delete_cancel(request.message):
+            return _finish(
+                request,
+                {
+                    "status": "cancelled",
+                    "message": "OK, anulowano usuwanie. Żadne wydarzenie nie zostało usunięte.",
+                    "event": None,
+                },
+                started_at,
+            )
+
+        if chat._is_confirmation(request.message) and not _is_delete_confirmation(request.message):
+            return _finish(
+                request,
+                {
+                    "status": "calendar_delete_confirmation",
+                    "message": (
+                        "Dla bezpieczeństwa potwierdź usunięcie jednoznacznie — "
+                        "napisz „tak”, „tak usuń” albo „potwierdzam”."
+                    ),
+                    "event": state,
+                },
+                started_at,
+            )
+
     fast_path_result = _deterministic_create_fast_path(request, state)
     if fast_path_result is not None:
         return _finish(request, fast_path_result, started_at)
@@ -298,6 +351,7 @@ def _chat_endpoint_inner(request: ChatRequest, started_at: float):
     delegated_request = _with_create_time_override(request, state)
     delegated_state = delegated_request.draft_event or state
     delegated_request = _with_normalized_create_confirmation(delegated_request, delegated_state)
+    delegated_request = _with_normalized_delete_confirmation(delegated_request, delegated_state)
     result = chat.chat_endpoint(delegated_request)
     return _finish(request, result, started_at)
 
