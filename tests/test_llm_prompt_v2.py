@@ -95,6 +95,19 @@ class LlmSemanticV3Tests(unittest.TestCase):
         self.assertEqual(result["operation"], "create")
         self.assertEqual(result["status"], "needs_input")
 
+    def test_runtime_delete_without_target_uses_non_calendar_route(self):
+        with patch.object(
+            llm_service,
+            "ask_llm_semantic",
+            return_value={"reply": "ok", "operation": "delete"},
+        ):
+            result = llm_service.ask_llm("usuń mi to wydarzenie", [], user_id="local-user")
+
+        self.assertEqual(result["semantic_operation"], "delete")
+        self.assertEqual(result["operation"], "__needs_input__")
+        self.assertEqual(result["status"], "needs_input")
+        self.assertIn("Które wydarzenie", result["reply"])
+
 
 if __name__ == "__main__":
     unittest.main()
