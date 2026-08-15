@@ -207,4 +207,14 @@ def ask_llm(
         draft_event=draft_event,
         user_id=user_id,
     )
-    return apply_dialog_policy(message, semantic, current_state=draft_event)
+    policy_result = apply_dialog_policy(message, semantic, current_state=draft_event)
+
+    # The legacy core routes every operation="delete" directly into Calendar
+    # search. For an under-specified DELETE, keep the semantic decision in a
+    # private field but route through the generic needs_input response instead.
+    if policy_result.get("operation") == "delete" and policy_result.get("status") == "needs_input":
+        policy_result["semantic_operation"] = "delete"
+        policy_result["operation"] = "__needs_input__"
+        policy_result["reply"] = "Które wydarzenie mam usunąć? Podaj nazwę, dzień lub inne kryterium."
+
+    return policy_result
