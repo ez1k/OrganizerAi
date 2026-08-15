@@ -2,10 +2,12 @@
 
 import json
 import logging
+from time import perf_counter
 
 import requests
 
 from app.services.database import find_learning_examples, format_learning_examples
+from app.services.turn_timing import record_component
 
 logger = logging.getLogger(__name__)
 OLLAMA_URL = "http://localhost:11434/api/chat"
@@ -101,18 +103,22 @@ def ask_llm(
         }
     )
 
-    response = requests.post(
-        OLLAMA_URL,
-        json={
-            "model": MODEL,
-            "messages": messages,
-            "stream": False,
-            "format": "json",
-            "options": {"temperature": 0.1, "num_predict": 350},
-        },
-        timeout=120,
-    )
-    response.raise_for_status()
+    started_at = perf_counter()
+    try:
+        response = requests.post(
+            OLLAMA_URL,
+            json={
+                "model": MODEL,
+                "messages": messages,
+                "stream": False,
+                "format": "json",
+                "options": {"temperature": 0.1, "num_predict": 350},
+            },
+            timeout=120,
+        )
+        response.raise_for_status()
+    finally:
+        record_component("llm", round((perf_counter() - started_at) * 1000))
 
     result = response.json().get("message", {}).get("content", "")
     if not result.strip():
