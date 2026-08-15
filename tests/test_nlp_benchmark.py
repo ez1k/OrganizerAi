@@ -1,6 +1,12 @@
+import subprocess
+import sys
 import unittest
+from pathlib import Path
 
 from scripts import benchmark_nlp
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
 class NlpBenchmarkScoringTests(unittest.TestCase):
@@ -10,6 +16,17 @@ class NlpBenchmarkScoringTests(unittest.TestCase):
     def test_time_comparison_accepts_hour_without_minutes(self):
         self.assertTrue(benchmark_nlp._equal("time_hint", "18:00", "18"))
         self.assertTrue(benchmark_nlp._equal("time_hint", "18:00", "o 18"))
+
+    def test_direct_script_execution_can_load_project_package(self):
+        result = subprocess.run(
+            [sys.executable, str(PROJECT_ROOT / "scripts" / "benchmark_nlp.py"), "--help"],
+            cwd=PROJECT_ROOT,
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertIn("Evaluate OrganizerAI NLP quality", result.stdout)
 
     def test_missing_slot_is_counted_as_hallucination_check(self):
         case = {
