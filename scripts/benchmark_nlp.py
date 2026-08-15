@@ -53,7 +53,11 @@ def _equal(field: str, expected, actual) -> bool:
     return _normalize(actual) == _normalize(expected)
 
 
-def _validate_object(label: str, expected: dict | None, actual) -> tuple[list[str], int, int, int, int]:
+def _validate_object(
+    label: str,
+    expected: dict | None,
+    actual,
+) -> tuple[list[str], int, int, int, int]:
     if not expected:
         return [], 0, 0, 0, 0
 
@@ -66,7 +70,13 @@ def _validate_object(label: str, expected: dict | None, actual) -> tuple[list[st
     if not isinstance(actual, dict):
         checks = len(expected.get("equals", {})) + len(expected.get("contains", {}))
         missing_checks = len(expected.get("missing", []))
-        return [f"{label}: expected object, got {type(actual).__name__}"], checks, 0, missing_checks, 0
+        return (
+            [f"{label}: expected object, got {type(actual).__name__}"],
+            checks,
+            0,
+            missing_checks,
+            0,
+        )
 
     for field, expected_value in expected.get("equals", {}).items():
         slot_total += 1
@@ -113,6 +123,23 @@ def _find_forbidden_key(value, forbidden: set[str], path: str = "result") -> lis
         for index, child in enumerate(value):
             found.extend(_find_forbidden_key(child, forbidden, f"{path}[{index}]"))
     return found
+
+
+def _expected_counts(case: dict) -> dict[str, int]:
+    expected = case.get("expected", {})
+    slot_total = 0
+    hallucination_total = 0
+    for object_name in ("event", "search"):
+        spec = expected.get(object_name) or {}
+        slot_total += len(spec.get("equals", {})) + len(spec.get("contains", {}))
+        hallucination_total += len(spec.get("missing", []))
+    hallucination_total += int(bool(case.get("forbidden_keys_anywhere")))
+    return {
+        "intent_total": int(expected.get("operation") is not None),
+        "status_total": int(expected.get("status") is not None),
+        "slot_total": slot_total,
+        "hallucination_total": hallucination_total,
+    }
 
 
 def _validate_case(case: dict, result: dict) -> dict:
@@ -196,7 +223,9 @@ def run_nlp_benchmark(
     latencies: list[float] = []
 
     totals = defaultdict(int)
-    category_totals: dict[str, defaultdict[str, int]] = defaultdict(lambda: defaultdict(int))
+    category_totals: dict[str, defaultdict[str, int]] = defaultdict(
+        lambda: defaultdict(int)
+    )
 
     print(f"NLP benchmark: {version}")
     print(f"Dataset: {dataset_path}")
@@ -223,16 +252,17 @@ def run_nlp_benchmark(
                 latency_ms = (time.perf_counter() - started) * 1000
                 result = None
                 exception = f"{type(exc).__name__}: {exc}"
+                counts = _expected_counts(case)
                 validation = {
                     "passed": False,
                     "errors": [exception],
-                    "intent_total": int(case.get("expected", {}).get("operation") is not None),
+                    "intent_total": counts["intent_total"],
                     "intent_correct": 0,
-                    "status_total": int(case.get("expected", {}).get("status") is not None),
+                    "status_total": counts["status_total"],
                     "status_correct": 0,
-                    "slot_total": 0,
+                    "slot_total": counts["slot_total"],
                     "slot_correct": 0,
-                    "hallucination_total": 0,
+                    "hallucination_total": counts["hallucination_total"],
                     "hallucination_correct": 0,
                 }
 
@@ -271,6 +301,11 @@ def run_nlp_benchmark(
                     "latency_ms": round(latency_ms, 3),
                     "passed": validation["passed"],
                     "errors": validation["errors"],
+                    "validation": {
+                        key: value
+                        for key, value in validation.items()
+                        if key not in {"passed", "errors"}
+                    },
                     "result": result,
                     "exception": exception,
                 }
@@ -344,6 +379,12 @@ def main() -> int:
     parser.add_argument("--runs", type=int, default=1)
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
     parser.add_argument("--version", default="v1")
+    parser.add_argument(
+        "--min-pass-rate",
+        type=float,
+        default=None,
+        help="Optional quality gate. Without it, measured NLP failures do not fail the process.",
+    )
     args = parser.parse_args()
 
     result = run_nlp_benchmark(
@@ -353,7 +394,9 @@ def main() -> int:
         output_dir=args.output_dir,
         version=args.version,
     )
-    return 0 if result["summary"]["case_pass_rate_pct"] == 100.0 else 1
+    if args.min_pass_rate is None:
+        return 0
+    return 0 if result["summary"]["case_pass_rate_pct"] >= args.min_pass_rate else 1
 
 
 if __name__ == "__main__":
