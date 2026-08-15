@@ -18,7 +18,9 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 CREATE_CANCEL_RE = re.compile(
-    r"^\s*(?:anuluj(?:\s+to)?|nieważne|niewazne|odpuść|odpusc|zrezygnuj|nie\s+dodawaj)\s*[.!]?\s*$",
+    r"^\s*(?:(?:a|albo|dobra|no|to|w\s+sumie|jednak)\s*[,\-]?\s+)*"
+    r"(?:anuluj(?:\s+to)?|nieważne|niewazne|odpuść|odpusc|zrezygnuj|nie\s+dodawaj)"
+    r"(?:\s*[,\-]?\s+(?:jednak|w\s+sumie|dobra|proszę|prosze))?\s*[.!]?\s*$",
     re.I,
 )
 CREATE_DECLINE_RE = re.compile(
