@@ -35,6 +35,17 @@ Różnica może wynosić pojedyncze milisekundy z powodu zaokrągleń; `backend_
 
 `calendar_latency_ms` obejmuje tylko faktyczne wywołania Google Calendar API przez `.execute()`. Dzięki temu sprawdzanie duplikatu może mieć jedno wywołanie Calendar, a faktyczne utworzenie wydarzenia kolejne. Budowa klienta API i lokalna obsługa poświadczeń pozostają w czasie backendu.
 
+## Hybrydowe kierowanie CREATE
+
+CREATE wykorzystuje dwa poziomy interpretacji:
+
+1. **deterministyczny fast-path** — jeśli parser jednoznacznie wyodrębni wszystkie wymagane sloty (`title`, `date_hint`, `time_hint`, `duration_minutes`), backend buduje podsumowanie bez wywołania LLM,
+2. **LLM fallback** — wypowiedzi niepełne lub niejednoznaczne są przekazywane do dotychczasowego routera i modelu, a wynik nadal podlega deterministycznej sanityzacji oraz walidacji backendu.
+
+Fast-path nie wykonuje zapisu do Google Calendar. Niezależnie od sposobu interpretacji finalny CREATE nadal wymaga podsumowania i jawnego potwierdzenia użytkownika.
+
+Takie rozwiązanie pozwala mierzyć kompromis między jakością NLP i wydajnością. Jednoznaczne polecenia nie ponoszą kosztu inferencji modelu, natomiast Mistral pozostaje odpowiedzialny za przypadki wymagające interpretacji języka naturalnego. W danych można to rozróżnić przez `llm_calls`: fast-path ma `llm_calls = 0`, a ścieżka modelowa `llm_calls > 0`.
+
 ## Instalacja / aktualizacja tabeli
 
 W SSMS uruchom:
@@ -53,7 +64,7 @@ Skrypt jest idempotentny. Jeśli tabela już istnieje, doda brakujące kolumny k
 python -m unittest discover -s tests -v
 ```
 
-Testy obejmują zarówno logikę wieloetapowego CREATE, jak i arytmetykę podziału latencji oraz rejestrację round-tripów Ollama i Google Calendar.
+Testy obejmują zarówno logikę wieloetapowego CREATE, granicę między deterministycznym fast-pathem i fallbackiem LLM, jak i arytmetykę podziału latencji oraz rejestrację round-tripów Ollama i Google Calendar.
 
 ## Raport ewaluacyjny
 
@@ -76,6 +87,7 @@ Najbardziej użyteczne wskaźniki do części eksperymentalnej:
 - **turns per resolved session** — liczba tur potrzebnych do osiągnięcia wyniku końcowego, również gdy użytkownik świadomie anuluje operację,
 - **average / P95 latency** — średni i wysokokwantilowy całkowity czas odpowiedzi,
 - **LLM / Calendar / backend time share** — udział poszczególnych komponentów w czasie obsługi,
+- **fast-path vs LLM latency** — różnica czasu obsługi jednoznacznych CREATE i CREATE wymagających modelu,
 - **error rate** — udział sesji zawierających status `error`.
 
 Dla CREATE wyższy clarification rate nie musi oznaczać gorszej jakości: przy wymaganiu precyzyjnego wpisu doprecyzowanie jest pożądanym zachowaniem, jeśli zapobiega zapisaniu niepełnego wydarzenia.
