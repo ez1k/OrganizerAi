@@ -51,6 +51,11 @@ class MotivationReminderRequest(BaseModel):
     user_id: str = "local-user"
 
 
+class MotivationReminderNaturalRequest(BaseModel):
+    when_text: str = Field(min_length=1, max_length=200)
+    user_id: str = "local-user"
+
+
 class MotivationReminderStatusRequest(BaseModel):
     status: Literal["delivered", "completed", "dismissed"]
     user_id: str = "local-user"
