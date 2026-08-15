@@ -1,4 +1,4 @@
-"""LLM adapter for structured interpretation of OrganizerAI messages."""
+"""LLM adapter for semantic interpretation of OrganizerAI messages."""
 
 import json
 import logging
@@ -14,69 +14,55 @@ OLLAMA_URL = "http://localhost:11434/api/chat"
 MODEL = "mistral"
 
 SYSTEM_PROMPT = """
-Jesteś modułem rozumienia języka dla aplikacji do planowania aktywności.
-Zwracasz wyłącznie JSON. Nie wykonujesz operacji na kalendarzu i nie wymyślasz danych.
-Backend osobno waliduje dane i wykonuje Google Calendar.
+Jesteś modułem NLU dla aplikacji do planowania aktywności.
+Twoim zadaniem jest WYŁĄCZNIE rozpoznać znaczenie wiadomości i wyodrębnić dane.
+NIE decydujesz o stanie dialogu, potwierdzeniu ani wykonaniu operacji — robi to deterministyczny backend.
+Zwracasz wyłącznie poprawny JSON i nie wymyślasz brakujących danych.
 
-INTENCJA — najpierw wybierz dokładnie jedną operację:
-- create: dodaj, zaplanuj, umów, wpisz/wrzuć aktywność do kalendarza,
-- search: sprawdź, pokaż, co mam, czy mam coś w swoim kalendarzu,
-- delete: usuń, skasuj, wywal wydarzenie z kalendarza,
-- external_search: pytanie o pogodę, kino, film, repertuar, wiadomości lub inne informacje spoza kalendarza,
-- chat: zwykła rozmowa/small-talk, np. „hej”, „co tam?”, „jak leci?”,
-- cancelled: wyraźne anulowanie aktywnej operacji, np. „nieważne”, „anuluj”, „odpuść”.
+Wybierz jedną operację semantyczną:
+- create: użytkownik chce dodać/zaplanować/umówić/wrzucić aktywność do kalendarza,
+- search: użytkownik pyta o własny kalendarz lub chce sprawdzić wydarzenia,
+- delete: użytkownik chce usunąć/skasować/wywalić wydarzenie,
+- external_search: pytanie dotyczy informacji spoza kalendarza, np. pogody, kina, filmu, repertuaru, wiadomości,
+- chat: zwykła rozmowa/small-talk,
+- cancelled: wyraźne anulowanie bieżącej operacji.
 
-STRUKTURA:
-- CREATE: event = title, date_hint, time_hint, duration_minutes, description.
-- SEARCH/DELETE: search = title, date_hint, time_hint, range_type, range_days.
-- Dla SEARCH/DELETE nie używaj event do kryteriów wyszukiwania.
+DANE:
+- CREATE -> event: title, date_hint, time_hint, duration_minutes, description.
+- SEARCH/DELETE -> search: title, date_hint, time_hint, range_type, range_days.
+- Dla SEARCH/DELETE nie wkładaj kryteriów do event.
 - Przy DELETE nigdy nie wymyślaj event_id ani selected_event_id.
 
-ZASADY SLOTÓW:
-1. Używaj tylko informacji z bieżącej wiadomości, historii i AKTUALNEGO STANU. Brakującego slotu nie zgaduj.
+ZASADY EKSTRAKCJI:
+1. Używaj wyłącznie informacji z bieżącej wiadomości, historii i AKTUALNEGO STANU.
 2. Nigdy nie zakładaj domyślnie „dzisiaj”, konkretnej godziny ani czasu trwania.
-3. „18”, „o 18”, „18:00” oznaczają time_hint. Normalizuj konkretną godzinę do HH:MM.
+3. „18”, „o 18”, „18:00” oznaczają time_hint; konkretną godzinę normalizuj do HH:MM.
 4. „90 minut”=90, „godzinę”=60, „pół godziny”=30, „półtorej godziny”=90, „dwie godziny”=120.
-5. „o 12 półtorej godziny” oznacza time_hint="12:00" i duration_minutes=90 — nie 12:30.
-6. „rano”, „po południu”, „wieczorem” nie są dokładną godziną. Nie zapisuj ich jako time_hint dla CREATE wymagającego precyzyjnej godziny.
-7. Zachowuj daty podane przez użytkownika. Jeśli daty nie ma, nie dodawaj „dziś”.
+5. „o 12 półtorej godziny” oznacza time_hint="12:00" oraz duration_minutes=90, nigdy 12:30.
+6. „rano”, „po południu”, „wieczorem” nie są dokładną godziną. Nie zapisuj ich jako time_hint, jeśli brak konkretnej godziny.
+7. Jeśli daty nie podano, nie dodawaj „dziś”.
 8. Dni tygodnia zwracaj kanonicznie: poniedziałek, wtorek, środa, czwartek, piątek, sobota, niedziela.
-9. Wyodrębnij nazwę aktywności jako title; np. „pouczyć się” oznacza tytuł związany z nauką.
+9. Wyodrębnij sensowny title aktywności, np. „pouczyć się” -> tytuł związany z nauką.
+10. Jeśli użytkownik zmienia temat mimo istniejącego draftu, klasyfikuj nową wiadomość według jej własnego znaczenia.
+11. Jeśli użytkownik poprawia aktywny CREATE, np. „jednak o 18:30”, zwróć podaną korektę i zachowaj semantykę operacji create.
+12. W reply nie twierdź, że operacja została już wykonana.
 
-STATUS:
-- create: jeśli title + date_hint + time_hint + duration_minutes są znane -> ready_for_confirmation; w przeciwnym razie -> needs_input,
-- search -> calendar_search,
-- delete: jeśli są wystarczające kryteria celu -> calendar_delete_confirmation; bez celu/kontekstu -> needs_input,
-- external_search -> external_search,
-- chat -> chat,
-- cancelled -> cancelled.
-
-Jeśli użytkownik zmienia temat mimo istniejącego draftu, klasyfikuj nową wiadomość zgodnie z jej własną intencją.
-Jeśli aktualny draft jest CREATE i użytkownik podaje korektę typu „jednak o 18:30”, zachowaj pozostałe sloty z draftu i zmień tylko podaną wartość.
-Jeśli użytkownik anuluje aktywny draft, zwróć operation="cancelled" i status="cancelled".
-W polu reply nie twierdź, że operacja została już wykonana.
-
-PRZED ZWRÓCENIEM JSON SPRAWDŹ:
-1. Czy operation odpowiada czasownikowi i znaczeniu bieżącej wiadomości?
-2. Czy każdy zwrócony slot pochodzi z wiadomości, historii albo AKTUALNEGO STANU?
-3. Dla CREATE: czy dokładnie cztery wymagane sloty są znane? Tak -> ready_for_confirmation, nie -> needs_input.
-4. Czy zawsze zwróciłeś operation i status?
-5. Czy odpowiedź zawiera wyłącznie poprawny JSON bez tekstu poza JSON?
+ZWERYFIKOWANE PRZYKŁADY z retrieval są tylko wzorcami semantycznymi. Nie kopiuj z nich wartości,
+których nie ma w bieżącej wiadomości/stanie. Jeśli zawierają status, ignoruj go — status wylicza backend.
 
 FORMAT:
 {
   "reply": "krótka odpowiedź po polsku",
-  "status": "needs_input | ready_for_confirmation | calendar_search | calendar_delete_confirmation | external_search | cancelled | chat",
   "operation": "create | search | delete | external_search | chat | cancelled",
-  "event": {"title": "string", "date_hint": "string", "time_hint": "string", "duration_minutes": null, "description": "string"},
+  "event": {"title": "string", "date_hint": "string", "time_hint": "string", "duration_minutes": 90, "description": "string"},
   "search": {"title": "string", "date_hint": "string", "time_hint": "string", "range_type": "next_days | this_week", "range_days": 14}
 }
 Pola event/search mogą być częściowe. Pomijaj wartości, których nie znasz.
 """
 
 
-# Minimal v2.1 few-shot set. Examples are intentionally different from the
-# frozen NLP evaluation utterances to avoid benchmark leakage.
+# Minimal semantic few-shots. They are intentionally different from the frozen
+# NLP evaluation utterances and do not teach dialog status/policy.
 STATIC_FEW_SHOT_MESSAGES = [
     {
         "role": "user",
@@ -86,8 +72,7 @@ STATIC_FEW_SHOT_MESSAGES = [
         "role": "assistant",
         "content": json.dumps(
             {
-                "reply": "Mam komplet danych do podsumowania.",
-                "status": "ready_for_confirmation",
+                "reply": "Rozumiem dane wydarzenia.",
                 "operation": "create",
                 "event": {
                     "title": "pisanie pracy",
@@ -107,8 +92,7 @@ STATIC_FEW_SHOT_MESSAGES = [
         "role": "assistant",
         "content": json.dumps(
             {
-                "reply": "O której dokładnie godzinie mają rozpocząć się porządki?",
-                "status": "needs_input",
+                "reply": "Rozumiem podane dane.",
                 "operation": "create",
                 "event": {
                     "title": "porządki",
@@ -127,8 +111,7 @@ STATIC_FEW_SHOT_MESSAGES = [
         "role": "assistant",
         "content": json.dumps(
             {
-                "reply": "Na jaki dzień mam zaplanować medytację?",
-                "status": "needs_input",
+                "reply": "Rozumiem podane dane.",
                 "operation": "create",
                 "event": {
                     "title": "medytacja",
@@ -148,11 +131,10 @@ def ask_llm(
     draft_event: dict | None = None,
     user_id: str = "local-user",
 ) -> dict:
-    """Ask Ollama for a structured interpretation of the current user message.
+    """Ask Ollama for semantic NLU output.
 
-    Static few-shots teach only the hardest slot/safety patterns. Explicitly
-    verified SQL examples are still retrieved as personalized semantic context.
-    Raw model output never becomes trusted learning context automatically.
+    The model extracts operation and semantic slots. Dialog status/policy is
+    intentionally applied later by app.services.dialog_policy.
     """
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
     messages.extend(STATIC_FEW_SHOT_MESSAGES)
@@ -192,7 +174,7 @@ def ask_llm(
                 "messages": messages,
                 "stream": False,
                 "format": "json",
-                "options": {"temperature": 0.1, "num_predict": 350},
+                "options": {"temperature": 0.1, "num_predict": 300},
             },
             timeout=120,
         )
@@ -205,7 +187,7 @@ def ask_llm(
         raise ValueError("Empty response from Ollama")
 
     parsed = json.loads(result)
-    if not isinstance(parsed, dict) or "reply" not in parsed or "status" not in parsed:
+    if not isinstance(parsed, dict):
         raise ValueError("Invalid structured response from Ollama")
-
+    parsed.setdefault("reply", "")
     return parsed
