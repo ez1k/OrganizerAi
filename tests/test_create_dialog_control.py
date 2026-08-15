@@ -71,6 +71,40 @@ class CreateDialogControlTests(unittest.TestCase):
         self.assertEqual(result["event"]["time_hint"], "16:00")
         self.assertEqual(result["event"]["duration_minutes"], 90)
 
+    def test_tak_dodaj_is_normalized_before_core_router(self):
+        draft = self._draft()
+        delegated_result = {
+            "status": "confirmed",
+            "message": "Dodane.",
+            "event": {"title": "trening siłowy"},
+        }
+        with (
+            patch.object(chat_flow.chat, "chat_endpoint", return_value=delegated_result) as delegated,
+            patch.object(chat_flow, "save_chat_turn_metric"),
+        ):
+            result = chat_flow.chat_endpoint(self._request("tak dodaj", draft))
+
+        self.assertEqual(result, delegated_result)
+        delegated.assert_called_once()
+        delegated_request = delegated.call_args.args[0]
+        self.assertEqual(delegated_request.message, "tak")
+        self.assertEqual(delegated_request.draft_event, draft)
+
+    def test_natural_duplicate_decline_cancels_without_core_router(self):
+        draft = {**self._draft(), "allow_duplicate": True}
+        with (
+            patch.object(chat_flow.chat, "chat_endpoint") as delegated,
+            patch.object(chat_flow, "save_chat_turn_metric"),
+        ):
+            result = chat_flow.chat_endpoint(
+                self._request("a to w takim razie nie", draft)
+            )
+
+        self.assertEqual(result["status"], "cancelled")
+        self.assertIsNone(result["event"])
+        self.assertIn("duplikatu", result["message"])
+        delegated.assert_not_called()
+
     def test_metric_records_latency_operation_and_status(self):
         delegated_result = {
             "status": "calendar_search",
