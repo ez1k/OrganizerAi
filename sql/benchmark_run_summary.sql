@@ -1,6 +1,33 @@
--- Wklej prefix wypisany przez scripts/benchmark_dialog.py, np. bench-a1b2c3d4-%
-DECLARE @session_prefix NVARCHAR(64) = N'bench-REPLACE_ME-%';
+-- Raport dla najnowszego runu scripts/benchmark_dialog.py.
+-- Session ID ma format: bench-<8 znaków run_id>-<scenario_id>.
+-- Jeśli chcesz przeanalizować starszy run, wpisz prefix ręcznie zamiast NULL,
+-- np. N'bench-56bef4fd-%'.
+DECLARE @session_prefix NVARCHAR(64) = NULL;
 
+IF @session_prefix IS NULL
+BEGIN
+    DECLARE @latest_benchmark_session NVARCHAR(64);
+
+    SELECT TOP (1)
+        @latest_benchmark_session = session_id
+    FROM dbo.chat_turn_metrics
+    WHERE session_id LIKE N'bench-%'
+      AND timing_version >= 1
+    ORDER BY created_at DESC, id DESC;
+
+    IF @latest_benchmark_session IS NULL
+    BEGIN
+        RAISERROR(N'Nie znaleziono żadnych rekordów benchmarku z timing_version >= 1.', 16, 1);
+        RETURN;
+    END;
+
+    -- "bench-" (5) + run_id (8) + "-" (1) = 14 znaków.
+    SET @session_prefix = LEFT(@latest_benchmark_session, 14) + N'%';
+END;
+
+SELECT @session_prefix AS benchmark_session_prefix;
+
+-- 1. Wynik każdego scenariusza w wybranym runie.
 SELECT
     session_id,
     operation,
@@ -24,10 +51,9 @@ WHERE session_id LIKE @session_prefix
   AND timing_version >= 1
 GROUP BY session_id, operation
 ORDER BY session_id;
-GO
 
--- Zbiorcze porównanie ścieżek wykonania dla jednego runu benchmarku.
-WITH benchmark_turns AS (
+-- 2. Zbiorcze porównanie ścieżek wykonania dla tego samego runu.
+;WITH benchmark_turns AS (
     SELECT
         *,
         CASE
