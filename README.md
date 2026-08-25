@@ -323,4 +323,18 @@ bezpieczny CREATE
 Google Calendar
 ```
 
-Bardziej szczegółowy opis końcowej architektury znajduje się w `docs/final_system_description.md`.
+## Dokumentacja końcowa
+
+- `docs/final_system_description.md` — pełny opis architektury, warstw, API i inwariantów bezpieczeństwa,
+- `docs/final_validation.md` — procedura końcowego testu E2E i kryteria gotowości do merge,
+- `tests/README.md` — zakres automatycznych testów regresyjnych,
+- `docs/evaluation.md` — metodologia pomiaru dialogu i wydajności,
+- `docs/nlp_quality_v*.md` — historia i interpretacja eksperymentów NLP.
+
+Przed finalnym merge uruchom:
+
+```powershell
+python -m unittest discover -s tests -v
+```
+
+i przejdź scenariusz z `docs/final_validation.md`.
