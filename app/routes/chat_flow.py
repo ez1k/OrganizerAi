@@ -166,9 +166,9 @@ def _with_normalized_delete_confirmation(request: ChatRequest, state: dict) -> C
 def _deterministic_create_fast_path(request: ChatRequest, state: dict) -> dict | None:
     """Handle safe CREATE parsing without LLM when intent and slots are explicit.
 
-    Complete drafts go straight to the confirmation summary. If exactly one
-    required slot is missing, the backend asks for that slot deterministically.
-    More ambiguous cases still fall back to the core router/LLM.
+    Complete drafts go straight to the confirmation summary. If an active
+    CREATE already has a validated title, slot-only continuation messages may
+    fill date/time/duration but cannot replace that title heuristically.
     """
     is_create_context = state.get("operation") == "create" or bool(
         chat.CREATE_INTENT_RE.search(request.message)
@@ -183,10 +183,20 @@ def _deterministic_create_fast_path(request: ChatRequest, state: dict) -> dict |
     ):
         return None
 
+    existing_title = str(state.get("title") or "").strip()
+    explicit_create_intent = bool(chat.CREATE_INTENT_RE.search(request.message))
     fields = chat._extract_create_fields(
         request.message,
         continuation=state.get("operation") == "create",
     )
+
+    # Continuations such as "jutro o 18 na 30 min" used to be parsed as if
+    # "jutro o 18 na" were a new title because it precedes the duration token.
+    # A previously validated title is authoritative unless the user starts an
+    # explicit new CREATE instruction containing another title.
+    if existing_title and not explicit_create_intent:
+        fields.pop("title", None)
+
     delimited_title = _extract_delimited_create_title(request.message)
     if delimited_title:
         fields["title"] = delimited_title
@@ -232,7 +242,16 @@ def _deterministic_create_fast_path(request: ChatRequest, state: dict) -> dict |
             "event": event,
         }
 
-    if len(missing) == 1:
+    safe_slot_continuation = (
+        state.get("operation") == "create"
+        and bool(existing_title)
+        and any(
+            key in fields
+            for key in ("date_hint", "time_hint", "duration_minutes")
+        )
+        and not explicit_create_intent
+    )
+    if len(missing) == 1 or safe_slot_continuation:
         return {
             "status": "needs_input",
             "message": chat._create_missing_message(event, missing),
