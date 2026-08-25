@@ -398,6 +398,8 @@ Uruchomienie:
 python -m unittest discover -s tests -v
 ```
 
+Pełna procedura E2E znajduje się w `docs/final_validation.md`.
+
 ## 17. Ograniczenia aktualnej wersji
 
 Aktualna implementacja jest rozwiązaniem lokalnym i demonstracyjnym. Najważniejsze ograniczenia:
@@ -434,3 +436,70 @@ Google Calendar
 ```
 
 Takie podejście pozwala połączyć elastyczność przetwarzania języka naturalnego z przewidywalnością i kontrolą wymaganą od aplikacji zarządzającej rzeczywistym kalendarzem.
+
+## 19. Mapa API
+
+Najważniejsze endpointy aplikacji:
+
+| Metoda | Endpoint | Rola |
+|---|---|---|
+| `POST` | `/chat` | główny dialog CREATE/SEARCH/DELETE |
+| `GET` | `/events` | pobranie wydarzeń |
+| `GET` | `/events/completed` | zakończone wydarzenia + informacja, czy mają refleksję |
+| `POST` | `/feedback` | zapis feedbacku interpretacji |
+| `POST` | `/feedback/{id}/correction` | zapis zweryfikowanej korekty |
+| `POST` | `/reflections/analyze` | analiza tekstowej opinii bez efektów ubocznych |
+| `POST` | `/reflections` | zapis/upsert refleksji |
+| `GET` | `/reflections` | odczyt refleksji użytkownika |
+| `POST` | `/reflections/{id}/reminders` | reminder z konkretnym `datetime` |
+| `POST` | `/reflections/{id}/reminders/from-text` | reminder z bezpiecznie sparsowanego terminu względnego |
+| `GET` | `/motivation-reminders/due` | odczyt należnych reminderów |
+| `POST` | `/motivation-reminders/{id}/status` | zakończenie lub odrzucenie reminderu |
+
+Endpoint `/reflections/analyze` jest celowo oddzielony od persistence. Samo wywołanie modelu nie zapisuje refleksji, nie tworzy reminderu i nie modyfikuje Calendar.
+
+## 20. Inwarianty bezpieczeństwa
+
+Finalna implementacja opiera się na kilku regułach, które powinny pozostać prawdziwe niezależnie od rozwoju systemu:
+
+1. **LLM nie wykonuje mutacji.** Wynik modelu jest danymi wejściowymi dla backendu, a nie komendą wykonawczą.
+2. **Niekompletny CREATE nie trafia do Calendar.** Wymagane są tytuł, dzień, godzina i czas trwania.
+3. **CREATE wymaga podsumowania i jawnego potwierdzenia.**
+4. **DELETE wymaga jednoznacznej identyfikacji oraz osobnego potwierdzenia.**
+5. **Wcześniej zwalidowany stan ma pierwszeństwo przed heurystyczną reinterpretacją kolejnej wiadomości.**
+6. **Refleksja NLP nie oznacza zgody na reminder.** Reminder powstaje dopiero po akcji użytkownika.
+7. **Reminder nie oznacza zgody na nowe wydarzenie.** `Zaplanuj ponownie` tworzy wyłącznie draft CREATE.
+8. **Finalny CREATE po reminderze przechodzi przez te same reguły bezpieczeństwa co zwykły CREATE.**
+9. **Do retrieval trafiają tylko zweryfikowane przykłady feedbacku.**
+10. **Nieprecyzyjne terminy reminderów nie są zgadywane.**
+
+## 21. Końcowa walidacja
+
+Przed merge wersji finalnej należy wykonać:
+
+```powershell
+python -m unittest discover -s tests -v
+```
+
+oraz scenariusz opisany w `docs/final_validation.md`.
+
+Szczególnie istotna regresja końcowa:
+
+```text
+draft.title = "spacer testowy E2E"
+message = "jutro o 18 na 30 min"
+```
+
+musi dać:
+
+```text
+title = spacer testowy E2E
+date_hint = jutro
+time_hint = 18:00
+duration_minutes = 30
+status = ready_for_confirmation
+```
+
+bez automatycznego zapisu do Google Calendar.
+
+Dopiero kolejne jednoznaczne potwierdzenie może wykonać mutację.
