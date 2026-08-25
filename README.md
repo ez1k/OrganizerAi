@@ -1,189 +1,192 @@
 # OrganizerAI
 
-OrganizerAI to konwersacyjny asystent kalendarza. Użytkownik rozmawia z aplikacją po polsku, backend interpretuje intencję, wykonuje operacje w Google Calendar i wykorzystuje SQL Server do zapisywania przykładów oraz zweryfikowanego feedbacku.
+OrganizerAI to konwersacyjny asystent organizacji czasu napisany w Pythonie. Aplikacja pozwala użytkownikowi rozmawiać po polsku o wydarzeniach, wyszukiwać je w Google Calendar, bezpiecznie tworzyć i usuwać wpisy, oceniać zakończone aktywności oraz ustawiać motywacyjne przypomnienia o czynnościach, które warto powtórzyć.
+
+Projekt wykorzystuje architekturę hybrydową: lokalny model Mistral odpowiada za interpretację semantyczną języka naturalnego, natomiast operacje krytyczne dla bezpieczeństwa kalendarza są walidowane i prowadzone przez deterministyczną logikę backendu.
+
+## Najważniejsze funkcje
+
+- konwersacja w języku polskim,
+- CREATE / SEARCH / DELETE dla Google Calendar,
+- wieloetapowe doprecyzowanie brakujących danych przed utworzeniem wydarzenia,
+- jawne potwierdzenie przed każdą mutacją kalendarza,
+- deterministyczne fast-pathy dla jednoznacznych poleceń,
+- fallback do lokalnego LLM dla bardziej swobodnych wypowiedzi,
+- deterministic grounding dat, godzin, czasu trwania i kryteriów DELETE,
+- feedback użytkownika oraz retrieval zweryfikowanych przykładów few-shot,
+- pomiar jakości dialogu i czasu działania poszczególnych komponentów,
+- refleksja po zakończonym wydarzeniu analizowana przez NLP,
+- zapis `sentiment`, `rating` i `worth_repeating`,
+- motywacyjne przypomnienia wymagające jawnej zgody użytkownika,
+- bezpieczne przejście z reminderu do istniejącego flow CREATE bez automatycznego tworzenia wydarzenia.
 
 ## Architektura
 
 ```text
 Streamlit
   app/frontend/app.py
+  app/frontend/motivation_ui.py
         |
-        | POST /chat
+        | HTTP / JSON
         v
 FastAPI
   app/main.py
         |
+        +--> app/routes/chat_flow.py
+        |      deterministyczny routing i metryki
+        |
         +--> app/routes/chat.py
-        |      parser regułowy / stan rozmowy
+        |      stan dialogu, walidacja CREATE/SEARCH/DELETE
         |
         +--> app/services/llm_service.py
         |      Ollama / Mistral
+        |
+        +--> app/services/dialog_policy.py
+        |      deterministic grounding
         |
         +--> app/services/google_calendar.py
         |      Google Calendar API
         |
         +--> app/routes/feedback.py
-        |      feedback użytkownika
+        |      feedback interpretacji
+        |
+        +--> app/routes/reflections.py
+        |      refleksje i motivation reminders
+        |
+        +--> app/services/reflection_nlp_service.py
+        |      analiza opinii po wydarzeniu
+        |
+        +--> app/services/motivation_time_service.py
+        |      deterministyczny parser czasu reminderu
         |
         +--> app/services/database.py
-               SQL Server / ai_organizer
+        |      SQL Server / ai_organizer
+        |
+        +--> app/services/event_reflection_service.py
+               persistence refleksji i reminderów
 ```
 
-Logika kalendarza działa w strefie `Europe/Warsaw`.
+Logika kalendarza działa w strefie `Europe/Warsaw`. Techniczne znaczniki czasu w SQL Server są zapisywane w UTC.
 
-## Najważniejsze pliki
+## Bezpieczny CREATE
 
-### `app/frontend/app.py`
+CREATE wymaga kompletu danych:
 
-Frontend Streamlit. Przechowuje historię rozmowy, `draft_event` oraz stan feedbacku w `st.session_state`. Wysyła wiadomości do `/chat` i pozwala oznaczyć ustrukturyzowaną interpretację jako poprawną lub błędną.
+```text
+title
+date_hint
+time_hint
+duration_minutes
+```
 
-### `app/routes/chat.py`
+Jeżeli brakuje informacji, system zachowuje `draft_event` i pyta tylko o brakujące sloty. Wpis nie trafia do Google Calendar, dopóki użytkownik nie zobaczy finalnego podsumowania i nie potwierdzi go jednoznacznie.
 
-Główna logika konwersacyjna aplikacji. Odpowiada za:
+Przykład:
 
-- rozpoznawanie potwierdzeń i prostych intencji kalendarzowych,
-- utrzymywanie stanu create/search/delete,
-- składanie kryteriów wyszukiwania,
-- wykonywanie operacji Google Calendar,
-- przekazywanie swobodnych wypowiedzi do LLM,
-- formatowanie wyników wyszukiwania,
-- zapis surowych, niezaufanych przykładów diagnostycznych z `corrected = 0`.
+```text
+Użytkownik: dodaj trening jutro
+Asystent: O której godzinie ma się rozpocząć?
+Użytkownik: o 18
+Asystent: Ile ma trwać wydarzenie?
+Użytkownik: 60 min
+Asystent: Podsumowanie wydarzenia: ... Czy mam dodać je do Google Calendar?
+Użytkownik: tak
+```
 
-### `app/routes/feedback.py`
+Jednoznaczne polecenia mogą zostać obsłużone przez deterministyczny fast-path bez wywołania LLM. Bardziej swobodne lub niepełne wypowiedzi przechodzą przez model, ale wynik modelu nadal podlega walidacji backendu.
 
-API feedbacku. Przyjmuje wynik widoczny w Streamlit, usuwa z niego dane runtime takie jak lista dopasowanych wydarzeń i zapisuje tylko strukturę istotną dla uczenia:
+## Bezpieczeństwo DELETE
+
+DELETE ma bardziej restrykcyjną politykę niż CREATE:
+
+- brak usunięcia przed jednoznacznym potwierdzeniem,
+- niejednoznaczne odpowiedzi nie wykonują mutacji,
+- przy wielu dopasowaniach wymagany jest wybór konkretnego wydarzenia albo osobna decyzja `usuń wszystkie`,
+- testy jednostkowe używają mocków i nie usuwają prawdziwych wydarzeń.
+
+## Feedback i uczenie na zweryfikowanych przykładach
+
+Mechanizm learning feedback loop nie wykonuje fine-tuningu wag Mistrala. Jest to retrieval + few-shot learning na przykładach jawnie zweryfikowanych przez użytkownika.
+
+```text
+wiadomość
+   ↓
+interpretacja systemu
+   ↓
+👍 / 👎
+   ↓
+conversation_feedback
+   ↓
+zweryfikowana korekta
+   ↓
+learning_examples.corrected = 1
+   ↓
+retrieval podobnych przykładów
+   ↓
+przyszły prompt Mistrala
+```
+
+Tylko rekordy `corrected = 1` mogą być używane jako kontekst dla modelu. Dane diagnostyczne pozostają poza promptem.
+
+## Refleksja po wydarzeniu
+
+Zakończone wydarzenia z Google Calendar mogą zostać ocenione w Streamlit.
+
+```text
+Google Calendar
+      ↓
+zakończone wydarzenie
+      ↓
+opinia użytkownika
+      ↓
+Mistral / reflection NLP
+      ↓
+sentiment + rating + worth_repeating
+      ↓
+dbo.event_reflections
+```
+
+Model może określić m.in.:
 
 ```json
 {
-  "operation": "search",
-  "search": {
-    "range_type": "next_days",
-    "range_days": 14
-  }
+  "sentiment": "positive",
+  "rating": 5,
+  "worth_repeating": true,
+  "confidence": "high",
+  "summary": "Pozytywna ocena aktywności."
 }
 ```
 
-Obsługiwane są dwa przepływy:
+Jawna ocena użytkownika, np. `5/5`, ma pierwszeństwo przed estymacją modelu. Analiza NLP sama nie tworzy reminderu i nie modyfikuje Google Calendar.
 
-- pozytywny feedback: interpretacja trafia do `conversation_feedback` i jest promowana do `learning_examples` z `corrected = 1`,
-- negatywny feedback: zapisywany jest błędny wynik, użytkownik wpisuje poprawkę w czacie, a poprawiona interpretacja wymaga jeszcze potwierdzenia 👍 przed promocją.
+## Motywacyjne przypomnienia
 
-### `app/services/llm_service.py`
-
-Adapter do lokalnego Ollama (`mistral`, `http://localhost:11434/api/chat`). Model zwraca wyłącznie ustrukturyzowany JSON, a operacje wykonuje backend.
-
-Przed zapytaniem do Ollamy pobierane są maksymalnie 3 podobne przykłady z SQL Server. Retrieval używa **wyłącznie rekordów `corrected = 1`**. Zweryfikowane przykłady są wzorcami semantycznymi; model nie powinien kopiować z nich dat, godzin ani tytułów, których nie ma w bieżącej wiadomości.
-
-### `app/services/database.py`
-
-Warstwa SQLAlchemy/pyodbc do SQL Server. Odpowiada za:
-
-- połączenie z bazą `ai_organizer`,
-- mapowanie `external_id` na `dbo.users.id`,
-- zapis `learning_examples`,
-- zapis i weryfikację `conversation_feedback`,
-- deduplikację zweryfikowanych przykładów,
-- retrieval zweryfikowanych przykładów dla tego samego użytkownika.
-
-### `app/services/google_calendar.py`
-
-Integracja z Google Calendar API: OAuth, tworzenie, wyszukiwanie, usuwanie wydarzeń oraz ochrona przed duplikatami.
-
-### `app/services/date_parser.py`
-
-Parser polskich dat i godzin oparty o `dateparser`.
-
-### `sql/create_learning_tables.sql`
-
-Schemat SQL Server dla:
-
-- `users`,
-- `learning_examples`,
-- `conversation_feedback`.
-
-Skrypt działa w bazie `ai_organizer` i seeduje lokalnego użytkownika developerskiego.
-
-## Identyfikacja użytkownika
-
-Aktualnie aplikacja lokalna korzysta z jednego użytkownika:
+Jeżeli refleksja jest pozytywna lub użytkownik wyraźnie sugeruje chęć powtórzenia aktywności, frontend może zapytać o zgodę na reminder.
 
 ```text
-external_id = local-user
-users.id    = 00000000-0000-0000-0000-000000000001
-```
-
-Przepływ:
-
-```text
-Streamlit
+refleksja
    ↓
-user_id = local-user
+jawna zgoda użytkownika
    ↓
-app/services/database.py
+"za 2 tygodnie"
    ↓
-ai_organizer.dbo.users
+deterministyczny parser czasu
    ↓
-learning_examples / conversation_feedback
+dbo.motivation_reminders
+   ↓
+reminder due
+   ↓
+"Czy chcesz zaplanować to ponownie?"
 ```
 
-Adres IP nie jest używany jako identyfikator. Po dodaniu logowania `local-user` zostanie zastąpiony stabilnym ID konta, a mapowanie `external_id -> users.id` pozostanie bez zmian.
+Nieprecyzyjne sformułowania typu `kiedyś` są odrzucane. Obsługiwane są m.in. `za 15 minut`, `jutro`, `za tydzień`, `za dwa tygodnie`, `za miesiąc`.
 
-## Verified learning feedback loop
-
-Aktualny mechanizm nie wykonuje fine-tuningu wag Mistrala. Jest to retrieval + few-shot learning na zweryfikowanych przykładach.
-
-### Poprawna interpretacja
-
-```text
-wiadomość użytkownika
-        ↓
-backend interpretuje
-        ↓
-Streamlit pokazuje wynik
-        ↓
-👍 Tak, poprawnie
-        ↓
-conversation_feedback.corrected_result_json = wynik
-        ↓
-learning_examples.corrected = 1
-        ↓
-przyszłe podobne wiadomości mogą użyć przykładu jako few-shot
-```
-
-### Błędna interpretacja
-
-```text
-wiadomość użytkownika
-        ↓
-backend interpretuje błędnie
-        ↓
-👎 Nie, poprawię
-        ↓
-conversation_feedback zapisuje błędny model_result_json
-        ↓
-użytkownik wpisuje poprawkę w czacie
-        ↓
-backend tworzy nową interpretację
-        ↓
-👍 potwierdzenie poprawionej interpretacji
-        ↓
-corrected_result_json + learning_examples.corrected = 1
-```
-
-Jeżeli poprawiona interpretacja nadal jest błędna, użytkownik może ponownie wybrać 👎 i wpisać następną korektę. Do kontekstu LLM nie trafia nic, dopóki nie zostanie jawnie potwierdzone.
-
-### Znaczenie `corrected`
-
-```text
-corrected = 0  → dane diagnostyczne / niezaufane, nie trafiają do promptu LLM
-corrected = 1  → dane zweryfikowane przez użytkownika, mogą być użyte jako few-shot
-```
-
-Stare rekordy `corrected = 0` mogą pozostać w bazie; retrieval je ignoruje.
+Kliknięcie `Zaplanuj ponownie` nie tworzy wydarzenia automatycznie. System ustawia jedynie nowy draft CREATE z zachowanym tytułem aktywności i prosi użytkownika o brakujące dane. Dopiero standardowe podsumowanie i jawne potwierdzenie może wykonać zapis do Google Calendar.
 
 ## Baza danych
 
-Domyślne połączenie używa:
+Domyślna lokalna konfiguracja:
 
 ```text
 Server=DESKTOP-SN6B47K
@@ -193,93 +196,131 @@ Encrypt=Yes
 TrustServerCertificate=Yes
 ```
 
-Konfigurację można nadpisać przez:
+Najważniejsze tabele:
 
-- `SQL_SERVER_CONNECTION`,
-- `SQL_SERVER_ODBC_DRIVER`,
-- `LOCAL_USER_EXTERNAL_ID`,
-- `LOCAL_USER_DB_ID`.
+- `dbo.users`,
+- `dbo.learning_examples`,
+- `dbo.conversation_feedback`,
+- `dbo.chat_turn_metrics`,
+- `dbo.event_reflections`,
+- `dbo.motivation_reminders`.
 
-### Polityka czasu
-
-Znaczniki techniczne `created_at` są zapisywane w UTC przez `SYSUTCDATETIME()`.
-
-```text
-SQL Server / created_at: UTC
-Google Calendar / logika kalendarza: Europe/Warsaw
-UI: konwersja UTC do strefy użytkownika przy wyświetlaniu
-```
-
-Przykład:
+Lokalny użytkownik developerski:
 
 ```text
-SQL Server: 2026-08-12 21:28:40 UTC
-Warszawa:   2026-08-12 23:28:40 CEST
+external_id = local-user
+users.id    = 00000000-0000-0000-0000-000000000001
 ```
 
-Przykładowa kontrola danych:
+Skrypty SQL:
 
-```sql
-USE [ai_organizer];
+- `sql/create_learning_tables.sql`,
+- `sql/create_chat_turn_metrics.sql`,
+- `sql/create_event_reflections.sql`,
+- `sql/evaluation_summary.sql`,
+- `sql/benchmark_run_summary.sql`,
+- `sql/benchmark_repeat_summary.sql`.
 
-SELECT
-    u.external_id,
-    le.message,
-    le.result_json,
-    le.corrected,
-    le.created_at
-FROM dbo.learning_examples AS le
-JOIN dbo.users AS u ON u.id = le.user_id
-ORDER BY le.created_at DESC;
+## Metryki i ewaluacja
+
+Każdy turn `/chat` może zostać zapisany do `dbo.chat_turn_metrics` z podziałem czasu na:
+
+```text
+latency_ms
+llm_latency_ms
+calendar_latency_ms
+backend_latency_ms
 ```
 
-Zweryfikowane przykłady używane przez model:
+Rejestrowane są także m.in. `operation`, `status`, liczba wywołań LLM/Calendar, informacja o konieczności doprecyzowania i obecności aktywnego draftu.
 
-```sql
-SELECT
-    message,
-    result_json,
-    created_at
-FROM dbo.learning_examples
-WHERE corrected = 1
-ORDER BY created_at DESC;
+Dokumentacja ewaluacji:
+
+- `docs/evaluation.md`,
+- `docs/nlp_quality_v1.md`,
+- `docs/nlp_quality_v2.md`,
+- `docs/nlp_quality_v2_1.md`,
+- `docs/nlp_quality_v3.md`,
+- `docs/nlp_quality_v3_1.md`.
+
+Zamrożony zbiór NLP znajduje się w `benchmarks/nlp_quality_v1.json`.
+
+Benchmarki uruchamiane są m.in. przez:
+
+```powershell
+python scripts/benchmark_dialog.py
+python scripts/benchmark_nlp.py --version v3.1 --policy deterministic
 ```
 
-Feedback i korekty:
+## Testy
 
-```sql
-SELECT
-    message,
-    model_result_json,
-    corrected_result_json,
-    created_at
-FROM dbo.conversation_feedback
-ORDER BY created_at DESC;
+Pełny zestaw testów:
+
+```powershell
+python -m unittest discover -s tests -v
 ```
+
+Testy obejmują m.in.:
+
+- wieloetapowy CREATE,
+- anulowanie i potwierdzenia,
+- parser dat i czasu trwania,
+- delimited CREATE syntax,
+- bezpieczny DELETE,
+- deterministic dialog policy,
+- metryki komponentowe,
+- feedback learning loop,
+- NLP refleksji,
+- zakończone wydarzenia,
+- parser czasu reminderów,
+- handoff reminder → CREATE i zachowanie tytułu.
 
 ## Uruchomienie lokalne
 
 Backend:
 
-```bash
-uvicorn app.main:app --reload
+```powershell
+python -m uvicorn app.main:app --host 127.0.0.1 --port 8001
 ```
 
 Frontend:
 
-```bash
+```powershell
 streamlit run app/frontend/app.py
 ```
 
 Ollama musi działać lokalnie i mieć dostępny model `mistral`.
 
-Zależności SQL Server znajdują się w `requirements-db.txt`.
+Domyślny frontend korzysta z:
 
-## Najbliższe prace techniczne
+```text
+http://127.0.0.1:8001
+```
 
-1. Dodać testy jednostkowe dla feedback API, retrieval, parserów dat i formatowania wydarzeń.
-2. Ulepszyć ranking podobieństwa przykładów (obecnie proste pokrycie tokenów).
-3. Dodać metryki jakości: liczba pozytywnych/negatywnych feedbacków i skuteczność korekt.
-4. Dodać trwałe logowanie użytkowników przed wdrożeniem wieloużytkownikowym.
-5. Rozważyć embeddingi lub wyszukiwanie wektorowe dopiero po zebraniu większej liczby zweryfikowanych przykładów.
-6. Fine-tuning modelu rozważać dopiero po zebraniu odpowiednio dużego, czystego zbioru danych.
+Adres można zmienić przez zmienną środowiskową `ORGANIZER_API_URL`.
+
+## Końcowy przepływ systemu
+
+```text
+język naturalny
+      ↓
+interpretacja hybrydowa
+      ↓
+walidacja i polityka dialogowa
+      ↓
+Google Calendar
+      ↓
+zakończone wydarzenie
+      ↓
+refleksja NLP
+      ↓
+personalizacja / reminder
+      ↓
+propozycja ponownego zaplanowania
+      ↓
+bezpieczny CREATE
+      ↓
+Google Calendar
+```
+
+Bardziej szczegółowy opis końcowej architektury znajduje się w `docs/final_system_description.md`.
