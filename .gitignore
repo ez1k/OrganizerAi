@@ -1,4 +1,23 @@
-/credentials.json
-data/learning_examples.jsonl
-benchmark_results/
+# Secrets / local configuration
+credentials.json
+token.json
+token.pickle
 .env
+.env.*
+
+# Python virtual environments
+.venv/
+venv/
+
+# Python cache
+__pycache__/
+*.py[cod]
+
+# IDE
+.idea/
+
+# Local project data
+data/learning_examples.jsonl
+
+# Benchmark output
+benchmark_results/
