@@ -24,6 +24,83 @@ def inject_dashboard_css() -> None:
             background: var(--oa-bg);
         }
 
+
+        /* Force a consistent light content area even when Streamlit/browser uses dark theme. */
+        .stApp,
+        .stApp main,
+        .stApp main [data-testid="stMarkdownContainer"],
+        .stApp main [data-testid="stMarkdownContainer"] p,
+        .stApp main [data-testid="stMarkdownContainer"] span,
+        .stApp main [data-testid="stMarkdownContainer"] li,
+        .stApp main label,
+        .stApp main small,
+        .stApp main [data-testid="stCaptionContainer"] {
+            color: var(--oa-text);
+        }
+
+        .stApp main [data-testid="stCaptionContainer"],
+        .stApp main [data-testid="stCaptionContainer"] p,
+        .stApp main [data-testid="stCaptionContainer"] span {
+            color: var(--oa-muted) !important;
+        }
+
+        .stApp main input,
+        .stApp main textarea {
+            color: var(--oa-text) !important;
+            background: #ffffff !important;
+            caret-color: var(--oa-text) !important;
+        }
+
+        .stApp main input::placeholder,
+        .stApp main textarea::placeholder {
+            color: #8a94a6 !important;
+            opacity: 1;
+        }
+
+        .stApp main div[data-baseweb="select"] > div {
+            background: #ffffff !important;
+            color: var(--oa-text) !important;
+        }
+
+        .stApp main div[data-baseweb="select"] input {
+            background: transparent !important;
+        }
+
+        div[data-testid="stChatInput"] {
+            background: #ffffff !important;
+            border: 1px solid var(--oa-border) !important;
+            box-shadow: 0 4px 14px rgba(31, 41, 55, 0.05);
+        }
+
+        div[data-testid="stChatInput"] textarea {
+            color: var(--oa-text) !important;
+            background: #ffffff !important;
+        }
+
+        div[data-testid="stChatMessage"] [data-testid="stMarkdownContainer"],
+        div[data-testid="stChatMessage"] [data-testid="stMarkdownContainer"] p,
+        div[data-testid="stChatMessage"] [data-testid="stMarkdownContainer"] span {
+            color: var(--oa-text) !important;
+        }
+
+        .stApp main .stButton > button[kind="secondary"] {
+            background: #ffffff;
+            color: var(--oa-text);
+            border-color: var(--oa-border);
+        }
+
+        .stApp main .stButton > button[kind="secondary"]:hover {
+            background: #f8fafc;
+            color: var(--oa-text);
+            border-color: #cfd7e4;
+        }
+
+        .stApp main .stButton > button[kind="primary"] {
+            background: var(--oa-green);
+            color: #ffffff;
+            border-color: var(--oa-green);
+        }
+
         .block-container {
             max-width: 1500px;
             padding-top: 1.4rem;
