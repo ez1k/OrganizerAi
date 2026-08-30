@@ -269,6 +269,36 @@ def list_due_motivation_reminders(
     return [_reminder_mapping(row) for row in rows]
 
 
+def list_pending_motivation_reminders(
+    user_id: str,
+    *,
+    limit: int = 20,
+) -> list[dict[str, Any]]:
+    """Return pending motivational reminders ordered by their scheduled time."""
+    database_user_id = get_or_create_user_id(user_id)
+    safe_limit = max(1, min(int(limit), 100))
+
+    with get_engine().connect() as conn:
+        rows = conn.execute(
+            text(f"""
+                SELECT TOP {safe_limit}
+                       r.id, r.reflection_id, r.remind_at, r.status,
+                       r.delivered_at, r.completed_at, r.created_at,
+                       e.calendar_event_id, e.event_title, e.event_start, e.event_end,
+                       e.rating, e.sentiment, e.feedback_text, e.worth_repeating
+                FROM dbo.motivation_reminders r
+                JOIN dbo.event_reflections e ON e.id = r.reflection_id
+                WHERE r.user_id = :user_id
+                  AND e.user_id = :user_id
+                  AND r.status = N'pending'
+                ORDER BY r.remind_at ASC, r.id ASC
+            """),
+            {"user_id": database_user_id},
+        ).mappings().all()
+
+    return [_reminder_mapping(row) for row in rows]
+
+
 def update_motivation_reminder_status(
     *,
     user_id: str,
