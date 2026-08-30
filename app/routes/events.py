@@ -1,8 +1,11 @@
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
+
 from fastapi import APIRouter, HTTPException, Query
 
 from app.services.event_reflection_service import list_event_reflections
 from app.services.event_service import get_events
-from app.services.google_calendar import list_recent_completed_events
+from app.services.google_calendar import list_recent_completed_events, search_events
 
 router = APIRouter()
 
@@ -10,6 +13,27 @@ router = APIRouter()
 @router.get("/events")
 def list_events():
     return get_events()
+
+
+@router.get("/events/upcoming")
+def list_upcoming_events(
+    days: int = Query(default=30, ge=1, le=365),
+    limit: int = Query(default=10, ge=1, le=100),
+):
+    """Return upcoming Google Calendar events for dashboard views."""
+    try:
+        now = datetime.now(ZoneInfo("Europe/Warsaw"))
+        events = search_events(
+            start=now,
+            end=now + timedelta(days=days),
+            max_results=limit,
+        )
+        return {"events": events}
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail="Nie udało się pobrać nadchodzących wydarzeń.",
+        ) from exc
 
 
 @router.get("/events/completed")
