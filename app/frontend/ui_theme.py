@@ -4,101 +4,14 @@ import streamlit as st
 
 
 def inject_dashboard_css() -> None:
-    """Apply lightweight dashboard styling without changing application behavior."""
+    """Apply dashboard layout styling while respecting Streamlit light/dark themes."""
     st.markdown(
         """
         <style>
         :root {
-            --oa-bg: #f5f7fb;
-            --oa-surface: #ffffff;
-            --oa-border: #e4e9f2;
-            --oa-text: #1f2937;
-            --oa-muted: #6b7280;
             --oa-sidebar: #172033;
             --oa-sidebar-2: #101827;
             --oa-green: #1f9d63;
-            --oa-blue: #3377d6;
-        }
-
-        .stApp {
-            background: var(--oa-bg);
-        }
-
-
-        /* Force a consistent light content area even when Streamlit/browser uses dark theme. */
-        .stApp,
-        .stApp main,
-        .stApp main [data-testid="stMarkdownContainer"],
-        .stApp main [data-testid="stMarkdownContainer"] p,
-        .stApp main [data-testid="stMarkdownContainer"] span,
-        .stApp main [data-testid="stMarkdownContainer"] li,
-        .stApp main label,
-        .stApp main small,
-        .stApp main [data-testid="stCaptionContainer"] {
-            color: var(--oa-text);
-        }
-
-        .stApp main [data-testid="stCaptionContainer"],
-        .stApp main [data-testid="stCaptionContainer"] p,
-        .stApp main [data-testid="stCaptionContainer"] span {
-            color: var(--oa-muted) !important;
-        }
-
-        .stApp main input,
-        .stApp main textarea {
-            color: var(--oa-text) !important;
-            background: #ffffff !important;
-            caret-color: var(--oa-text) !important;
-        }
-
-        .stApp main input::placeholder,
-        .stApp main textarea::placeholder {
-            color: #8a94a6 !important;
-            opacity: 1;
-        }
-
-        .stApp main div[data-baseweb="select"] > div {
-            background: #ffffff !important;
-            color: var(--oa-text) !important;
-        }
-
-        .stApp main div[data-baseweb="select"] input {
-            background: transparent !important;
-        }
-
-        div[data-testid="stChatInput"] {
-            background: #ffffff !important;
-            border: 1px solid var(--oa-border) !important;
-            box-shadow: 0 4px 14px rgba(31, 41, 55, 0.05);
-        }
-
-        div[data-testid="stChatInput"] textarea {
-            color: var(--oa-text) !important;
-            background: #ffffff !important;
-        }
-
-        div[data-testid="stChatMessage"] [data-testid="stMarkdownContainer"],
-        div[data-testid="stChatMessage"] [data-testid="stMarkdownContainer"] p,
-        div[data-testid="stChatMessage"] [data-testid="stMarkdownContainer"] span {
-            color: var(--oa-text) !important;
-        }
-
-        .stApp main .stButton > button[kind="secondary"] {
-            background: #ffffff;
-            color: var(--oa-text);
-            border-color: var(--oa-border);
-        }
-
-        .stApp main .stButton > button[kind="secondary"]:hover {
-            background: #f8fafc;
-            color: var(--oa-text);
-            border-color: #cfd7e4;
-        }
-
-        .stApp main .stButton > button[kind="primary"] {
-            background: var(--oa-green);
-            color: #ffffff;
-            border-color: var(--oa-green);
         }
 
         .block-container {
@@ -107,6 +20,7 @@ def inject_dashboard_css() -> None:
             padding-bottom: 2rem;
         }
 
+        /* Sidebar intentionally stays dark in both app themes. */
         section[data-testid="stSidebar"] {
             background: linear-gradient(180deg, var(--oa-sidebar) 0%, var(--oa-sidebar-2) 100%);
             border-right: 1px solid rgba(255, 255, 255, 0.06);
@@ -145,12 +59,12 @@ def inject_dashboard_css() -> None:
             border-color: rgba(255, 255, 255, 0.08);
         }
 
+        /* Main content inherits Streamlit's active light/dark theme. */
         div[data-testid="stChatMessage"] {
-            background: var(--oa-surface);
-            border: 1px solid var(--oa-border);
+            background: color-mix(in srgb, currentColor 4%, transparent);
+            border: 1px solid color-mix(in srgb, currentColor 14%, transparent);
             border-radius: 14px;
             padding: 0.8rem 0.95rem;
-            box-shadow: 0 4px 18px rgba(31, 41, 55, 0.035);
         }
 
         div[data-testid="stChatInput"] {
@@ -163,16 +77,18 @@ def inject_dashboard_css() -> None:
             justify-content: space-between;
             gap: 1rem;
             margin-bottom: 1.2rem;
+            color: inherit;
         }
 
         .oa-header h1 {
             font-size: 1.45rem;
             margin: 0;
-            color: var(--oa-text);
+            color: inherit;
         }
 
         .oa-header .oa-subtitle {
-            color: var(--oa-muted);
+            color: inherit;
+            opacity: 0.68;
             font-size: 0.88rem;
             margin-top: 0.15rem;
         }
@@ -203,28 +119,29 @@ def inject_dashboard_css() -> None:
         .oa-panel-title {
             font-size: 0.92rem;
             font-weight: 800;
-            color: var(--oa-text);
+            color: inherit;
             margin-bottom: 0.55rem;
         }
 
         .oa-card {
-            background: var(--oa-surface);
-            border: 1px solid var(--oa-border);
+            color: inherit;
+            background: color-mix(in srgb, currentColor 4%, transparent);
+            border: 1px solid color-mix(in srgb, currentColor 14%, transparent);
             border-radius: 14px;
             padding: 0.85rem 0.95rem;
             margin-bottom: 0.75rem;
-            box-shadow: 0 4px 18px rgba(31, 41, 55, 0.035);
         }
 
         .oa-card-title {
             font-weight: 800;
-            color: var(--oa-text);
+            color: inherit;
             margin-bottom: 0.15rem;
         }
 
         .oa-card-meta {
             font-size: 0.80rem;
-            color: var(--oa-muted);
+            color: inherit;
+            opacity: 0.72;
             line-height: 1.45;
         }
 
@@ -233,7 +150,8 @@ def inject_dashboard_css() -> None:
         }
 
         .oa-empty {
-            color: var(--oa-muted);
+            color: inherit;
+            opacity: 0.68;
             font-size: 0.86rem;
             padding: 0.55rem 0;
         }
