@@ -226,7 +226,7 @@ def _render_feedback_controls() -> None:
     with yes_col:
         if st.button(
             "👍 Tak, poprawnie",
-            use_container_width=True,
+            width="stretch",
             key="feedback_accept",
         ):
             try:
@@ -237,7 +237,7 @@ def _render_feedback_controls() -> None:
     with no_col:
         if st.button(
             "👎 Nie, poprawię",
-            use_container_width=True,
+            width="stretch",
             key="feedback_reject",
         ):
             try:
@@ -267,7 +267,7 @@ def _render_event_reflections() -> None:
     with refresh_col:
         if st.button(
             "🔄 Pobierz zakończone",
-            use_container_width=True,
+            width="stretch",
             key="load_completed_events",
         ):
             try:
@@ -326,7 +326,7 @@ def _render_event_reflections() -> None:
 
     if st.button(
         "🧠 Przeanalizuj i zapisz ocenę",
-        use_container_width=True,
+        width="stretch",
         key="save_reflection",
         type="primary",
     ):
@@ -424,7 +424,7 @@ def _render_sidebar() -> None:
             if st.button(
                 f"{icon}  {page}",
                 key=f"nav_{page}",
-                use_container_width=True,
+                width="stretch",
                 type="primary" if active else "secondary",
             ):
                 st.session_state.active_page = page
@@ -585,7 +585,7 @@ def _render_chat_history() -> None:
                     if st.button(
                         "✅ Tak, zapisz",
                         key="confirm_create_from_card",
-                        use_container_width=True,
+                        width="stretch",
                         type="primary",
                     ):
                         _process_chat_message("tak")
@@ -594,7 +594,7 @@ def _render_chat_history() -> None:
                     if st.button(
                         "✕ Anuluj",
                         key="cancel_create_from_card",
-                        use_container_width=True,
+                        width="stretch",
                     ):
                         _process_chat_message("anuluj")
                         st.rerun()
@@ -642,7 +642,7 @@ def _render_upcoming_panel(limit: int = 4) -> None:
                 unsafe_allow_html=True,
             )
 
-    if st.button("Pokaż cały kalendarz", key="open_calendar_page", use_container_width=True):
+    if st.button("Pokaż cały kalendarz", key="open_calendar_page", width="stretch"):
         st.session_state.active_page = "Kalendarz"
         st.rerun()
 
@@ -673,7 +673,7 @@ def _render_reminder_panel(limit: int = 3) -> None:
 
     render_due_motivation_reminders(API_URL, USER_ID)
 
-    if st.button("Zarządzaj reminderami", key="open_reminders_page", use_container_width=True):
+    if st.button("Zarządzaj reminderami", key="open_reminders_page", width="stretch"):
         st.session_state.active_page = "Remindery"
         st.rerun()
 
@@ -702,7 +702,7 @@ def _render_chat_page() -> None:
 def _render_calendar_page() -> None:
     refresh_col, info_col = st.columns([1, 3])
     with refresh_col:
-        if st.button("🔄 Odśwież", key="refresh_calendar", use_container_width=True):
+        if st.button("🔄 Odśwież", key="refresh_calendar", width="stretch"):
             st.rerun()
     with info_col:
         st.caption("Widok pokazuje wydarzenia z Google Calendar z najbliższych 60 dni.")
@@ -797,7 +797,7 @@ def _render_summary_page() -> None:
     with refresh_col:
         st.write("")
         st.write("")
-        if st.button("🔄 Odśwież", key="refresh_summary", use_container_width=True):
+        if st.button("🔄 Odśwież", key="refresh_summary", width="stretch"):
             st.rerun()
 
     try:
@@ -837,7 +837,7 @@ def _render_summary_page() -> None:
                 activity_df,
                 x="label",
                 y="count",
-                use_container_width=True,
+                width="stretch",
             )
         else:
             st.info("Brak danych o zakończonych wydarzeniach w wybranym okresie.")
@@ -857,7 +857,7 @@ def _render_summary_page() -> None:
                 pd.DataFrame(sentiment_rows),
                 x="Ocena",
                 y="Liczba",
-                use_container_width=True,
+                width="stretch",
             )
         else:
             st.info("Brak przeanalizowanych refleksji w wybranym okresie.")
@@ -955,7 +955,7 @@ def _render_summary_page() -> None:
                 operation_df,
                 x="Operacja",
                 y="Liczba",
-                use_container_width=True,
+                width="stretch",
             )
 
         clarification_turns = int(usage.get("clarification_turns", 0))
@@ -992,7 +992,7 @@ def _render_history_page() -> None:
                 unsafe_allow_html=True,
             )
 
-    if st.button("🗑️ Wyczyść rozmowę", key="clear_history", use_container_width=False):
+    if st.button("🗑️ Wyczyść rozmowę", key="clear_history", width="content"):
         _clear_conversation()
         st.rerun()
 
