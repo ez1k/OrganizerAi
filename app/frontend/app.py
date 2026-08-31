@@ -837,8 +837,6 @@ def _render_summary_page() -> None:
                 activity_df,
                 x="label",
                 y="count",
-                x_label="Tydzień",
-                y_label="Zakończone wydarzenia",
                 use_container_width=True,
             )
         else:
@@ -859,8 +857,6 @@ def _render_summary_page() -> None:
                 pd.DataFrame(sentiment_rows),
                 x="Ocena",
                 y="Liczba",
-                x_label="Sentyment",
-                y_label="Liczba refleksji",
                 use_container_width=True,
             )
         else:
@@ -959,8 +955,6 @@ def _render_summary_page() -> None:
                 operation_df,
                 x="Operacja",
                 y="Liczba",
-                x_label="Rodzaj operacji",
-                y_label="Liczba tur",
                 use_container_width=True,
             )
 
