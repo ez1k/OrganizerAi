@@ -49,6 +49,19 @@ class DialogPolicyTests(unittest.TestCase):
         )
         self.assertEqual(result["status"], "ready_for_confirmation")
 
+    def test_generic_create_title_is_rejected(self):
+        result = apply_dialog_policy(
+            "a możesz dodać do kalendarza wydarzenie?",
+            {
+                "operation": "create",
+                "event": {"title": "do kalendarza wydarzenie"},
+            },
+        )
+
+        self.assertEqual(result["operation"], "create")
+        self.assertEqual(result["status"], "needs_input")
+        self.assertNotIn("title", result["event"])
+
     def test_incomplete_create_needs_input_even_if_model_claims_ready(self):
         result = apply_dialog_policy(
             "dodaj spotkanie jutro o 18",
