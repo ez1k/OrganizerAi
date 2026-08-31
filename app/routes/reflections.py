@@ -14,6 +14,7 @@ from app.schemas import (
 )
 from app.services.event_reflection_service import (
     list_due_motivation_reminders,
+    list_pending_motivation_reminders,
     list_event_reflections,
     save_event_reflection,
     schedule_motivation_reminder,
@@ -126,6 +127,19 @@ def create_motivation_reminder_from_text(
     except Exception as exc:
         logger.exception("Failed to schedule natural reminder for reflection_id=%s", reflection_id)
         raise HTTPException(status_code=500, detail="Nie udało się zapisać przypomnienia.") from exc
+
+
+@router.get("/motivation-reminders")
+def get_motivation_reminders(
+    user_id: str = "local-user",
+    limit: int = Query(default=20, ge=1, le=100),
+):
+    """Return pending reminders for dashboard and reminder-management views."""
+    try:
+        return {"reminders": list_pending_motivation_reminders(user_id, limit=limit)}
+    except Exception as exc:
+        logger.exception("Failed to load motivation reminders for user_id=%s", user_id)
+        raise HTTPException(status_code=500, detail="Nie udało się pobrać przypomnień.") from exc
 
 
 @router.get("/motivation-reminders/due")
