@@ -877,7 +877,7 @@ def chat_endpoint(request: ChatRequest):
             return {
                 "status": "external_search",
                 "message": (
-                    "To pytanie dotyczy informacji spoza kalendarza. "
+                    "To pytanie wymaga aktualnych danych zewnętrznych. "
                     "Nie mam jeszcze podłączonego wyszukiwania internetowego, więc nie będę zgadywać odpowiedzi."
                 ),
                 "event": None,
@@ -968,6 +968,12 @@ def chat_endpoint(request: ChatRequest):
                 "message": _create_confirmation_message(event_data),
                 "event": event_data,
             }
+
+        # A normal conversation must never create or mutate a Calendar draft.
+        # Existing draft state remains owned by the caller/session and can be
+        # explicitly resumed or cancelled on a later turn.
+        if operation == "chat":
+            return {"status": "chat", "message": reply, "event": None}
 
         event_data = _merge_event(
             request.draft_event if state.get("operation", "create") == "create" else None,
