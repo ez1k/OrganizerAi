@@ -16,7 +16,7 @@ MODEL = "mistral"
 
 SYSTEM_PROMPT = """
 Jesteś modułem NLU dla aplikacji do planowania aktywności.
-Twoim zadaniem jest WYŁĄCZNIE rozpoznać znaczenie wiadomości i wyodrębnić dane.
+Twoim zadaniem jest WYŁĄCZNIE rozpoznać znaczenie wiadomości i wyodrębnić dane dla operacji kalendarzowych. Dla operation="chat" dodatkowo generujesz naturalną odpowiedź w polu reply.
 NIE decydujesz o stanie dialogu, potwierdzeniu ani wykonaniu operacji — robi to deterministyczny backend.
 Zwracasz wyłącznie poprawny JSON i nie wymyślasz brakujących danych.
 
