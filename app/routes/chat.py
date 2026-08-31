@@ -66,6 +66,16 @@ CREATE_FIELD_LABELS = {
     "duration_minutes": "czasu trwania",
 }
 
+GENERIC_CREATE_TITLES = {
+    "wydarzenie",
+    "event",
+    "spotkanie",
+    "do kalendarza wydarzenie",
+    "do kalendarza event",
+    "wydarzenie do kalendarza",
+    "event do kalendarza",
+}
+
 
 def _is_confirmation(message):
     normalized = " ".join(message.strip().lower().split())
@@ -127,6 +137,43 @@ def _merge_search(draft, candidate):
 
 def _normalize_text(value):
     return " ".join(str(value or "").strip().lower().split())
+
+
+def _normalize_create_title(value):
+    text = _normalize_text(value).strip(" ,.;:!?-")
+    text = re.sub(r"^(?:mi\s+)?do\s+(?:mojego\s+)?kalendarza\s+", "", text, flags=re.I)
+    return text.strip(" ,.;:!?-")
+
+
+def _is_generic_create_title(value):
+    normalized = _normalize_create_title(value)
+    return not normalized or normalized in GENERIC_CREATE_TITLES
+
+
+def _extract_explicit_create_title(message):
+    raw = str(message or "").strip()
+    match = re.search(r"\b(?:tytuł|tytul)\s*[:=\-]\s*(.+)$", raw, re.I)
+    if not match:
+        return None
+    candidate = match.group(1).strip(" ,.;:!?-")
+    return candidate if candidate and not _is_generic_create_title(candidate) else None
+
+
+def _extract_structured_continuation_title(message):
+    """Extract a title from slot continuation such as 'środa 5:00, lot do bari - 90 min'."""
+    raw = str(message or "").strip()
+    if "," not in raw:
+        return None
+
+    tail = raw.split(",", 1)[1].strip()
+    tail = DURATION_MINUTES_RE.sub(" ", tail)
+    tail = DURATION_HOURS_RE.sub(" ", tail)
+    tail = re.sub(r"\b(?:półtorej|poltorej|pół|pol)\s+godzin\w*\b", " ", tail, flags=re.I)
+    tail = re.sub(r"\bkwadrans\b", " ", tail, flags=re.I)
+    candidate = tail.strip(" ,.;:!?-–—")
+    if not candidate or not re.search(r"[^\W\d_]", candidate, re.UNICODE):
+        return None
+    return candidate if not _is_generic_create_title(candidate) else None
 
 
 def _extract_duration_minutes(message):
@@ -253,6 +300,15 @@ def _extract_create_title(message, continuation=False):
     if not raw:
         return None
 
+    explicit_title = _extract_explicit_create_title(raw)
+    if explicit_title:
+        return explicit_title
+
+    if continuation:
+        structured_title = _extract_structured_continuation_title(raw)
+        if structured_title:
+            return structured_title
+
     intent = re.search(
         r"\b(?:dodaj|dodać|dodac|zaplanuj|zaplanować|zaplanowac|umów|umow)\s+(.+)$",
         raw,
@@ -279,8 +335,14 @@ def _extract_create_title(message, continuation=False):
             maxsplit=1,
             flags=re.I,
         )[0]
-        candidate = candidate.strip(" ,.;:-")
-        if candidate:
+        candidate = candidate.strip(" ,.;:!?-")
+        candidate = re.sub(
+            r"^(?:mi\s+)?do\s+(?:mojego\s+)?kalendarza\s+",
+            "",
+            candidate,
+            flags=re.I,
+        ).strip(" ,.;:!?-")
+        if candidate and not _is_generic_create_title(candidate):
             return candidate
 
     if continuation:
@@ -301,12 +363,20 @@ def _extract_create_title(message, continuation=False):
                 "okej",
             }
             prefix = raw[: duration_match.start()].strip(" ,.;:-")
-            if prefix and _normalize_text(prefix) not in ignored:
+            if (
+                prefix
+                and _normalize_text(prefix) not in ignored
+                and not _is_generic_create_title(prefix)
+            ):
                 return prefix
 
             suffix = raw[duration_match.end() :].strip(" ,.;:-")
             suffix = re.sub(r"^(?:i|to|czyli)\s+", "", suffix, flags=re.I).strip(" ,.;:-")
-            if suffix and _normalize_text(suffix) not in ignored:
+            if (
+                suffix
+                and _normalize_text(suffix) not in ignored
+                and not _is_generic_create_title(suffix)
+            ):
                 return suffix
 
     return None
@@ -335,8 +405,12 @@ def _extract_create_fields(message, continuation=False):
 
 
 def _candidate_title_is_grounded(message, title):
-    normalized_title = _normalize_text(title)
-    return bool(normalized_title and normalized_title in _normalize_text(message))
+    normalized_title = _normalize_create_title(title)
+    return bool(
+        normalized_title
+        and not _is_generic_create_title(normalized_title)
+        and normalized_title in _normalize_text(message)
+    )
 
 
 def _sanitize_create_event(message, state, candidate):
