@@ -32,11 +32,13 @@ SEARCH_INTENT_RE = re.compile(
 )
 DELETE_INTENT_RE = re.compile(r"\b(?:usuń|usun|skasuj|wywal)\b", re.I)
 EXTERNAL_INTENT_RE = re.compile(
-    r"\b(?:pogoda|pogodę|pogode|kino|kinie|film|filmy|repertuar|wiadomości|wiadomosci|kurs\s+walut)\b",
+    r"\b(?:pogoda|pogodę|pogode|kino|kinie|repertuar|wiadomości|wiadomosci|kurs\s+walut)\b",
     re.I,
 )
 CANCEL_INTENT_RE = re.compile(
-    r"\b(?:nieważne|niewazne|anuluj|odpuść|odpusc|zrezygnuj)\b",
+    r"\b(?:nieważne|niewazne|anuluj|odpuść|odpusc|zrezygnuj)\b"
+    r"|\bnie\s+(?:chcę|chce)\s+(?:(?:nic|niczego|tego)\s+)?(?:dodawać|dodawac|planować|planowac)\b"
+    r"|\b(?:nic|niczego)\s+nie\s+dodawaj\b",
     re.I,
 )
 CHAT_ONLY_RE = re.compile(
@@ -125,6 +127,15 @@ GENERIC_DELETE_TITLES = {
     "je",
     "ten drugi",
     "ten pierwszy",
+}
+
+GENERIC_CREATE_TITLES = {
+    "wydarzenie",
+    "event",
+    "do kalendarza wydarzenie",
+    "do kalendarza event",
+    "wydarzenie do kalendarza",
+    "event do kalendarza",
 }
 
 
@@ -234,6 +245,20 @@ def _sanitize_event(event):
         return event
 
     sanitized = copy.deepcopy(event)
+
+    if "title" in sanitized:
+        title = _normalized_text(sanitized.get("title")).strip(" ,.;:!?-")
+        title_without_wrapper = re.sub(
+            r"^(?:mi\s+)?do\s+(?:mojego\s+)?kalendarza\s+",
+            "",
+            title,
+            flags=re.I,
+        ).strip(" ,.;:!?-")
+        if not title_without_wrapper or title_without_wrapper in GENERIC_CREATE_TITLES:
+            sanitized.pop("title", None)
+        else:
+            sanitized["title"] = title_without_wrapper
+
     if "date_hint" in sanitized:
         sanitized["date_hint"] = _canonicalize_date_hint(sanitized.get("date_hint"))
 

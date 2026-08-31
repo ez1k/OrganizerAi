@@ -31,6 +31,12 @@ class LlmSemanticV3Tests(unittest.TestCase):
             with self.subTest(fragment=fragment):
                 self.assertIn(fragment, prompt)
 
+    def test_prompt_allows_general_chat_without_web_lookup(self):
+        prompt = llm_service.SYSTEM_PROMPT
+        self.assertIn('Dla operation="chat" odpowiedz', prompt)
+        self.assertIn('„ile to 4x4?”', prompt)
+        self.assertIn('operation="external_search" wybieraj tylko wtedy', prompt)
+
     def test_v3_few_shots_are_semantic_and_do_not_contain_status(self):
         messages = llm_service.STATIC_FEW_SHOT_MESSAGES
         self.assertEqual(len(messages), 6)

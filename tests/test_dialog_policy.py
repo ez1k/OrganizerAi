@@ -16,6 +16,12 @@ class DialogPolicyTests(unittest.TestCase):
             with self.subTest(message=message):
                 self.assertEqual(infer_operation(message, llm_operation), expected)
 
+    def test_simple_math_can_remain_general_chat(self):
+        self.assertEqual(
+            infer_operation("czy możesz pomnożyć 4x4?", "chat"),
+            "chat",
+        )
+
     def test_ambiguous_message_keeps_llm_operation(self):
         self.assertEqual(infer_operation("a ten drugi?", "delete"), "delete")
 
@@ -42,6 +48,19 @@ class DialogPolicyTests(unittest.TestCase):
             },
         )
         self.assertEqual(result["status"], "ready_for_confirmation")
+
+    def test_generic_create_title_is_rejected(self):
+        result = apply_dialog_policy(
+            "a możesz dodać do kalendarza wydarzenie?",
+            {
+                "operation": "create",
+                "event": {"title": "do kalendarza wydarzenie"},
+            },
+        )
+
+        self.assertEqual(result["operation"], "create")
+        self.assertEqual(result["status"], "needs_input")
+        self.assertNotIn("title", result["event"])
 
     def test_incomplete_create_needs_input_even_if_model_claims_ready(self):
         result = apply_dialog_policy(
