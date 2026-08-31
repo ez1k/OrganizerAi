@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 
-from app.routes import chat_flow, events, feedback, reflections
+from app.routes import chat_flow, events, feedback, reflections, summary
 
 app = FastAPI()
 
@@ -8,6 +8,7 @@ app.include_router(chat_flow.router)
 app.include_router(events.router)
 app.include_router(feedback.router)
 app.include_router(reflections.router)
+app.include_router(summary.router)
 
 
 @app.get("/")
