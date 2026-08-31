@@ -16,6 +16,12 @@ class DialogPolicyTests(unittest.TestCase):
             with self.subTest(message=message):
                 self.assertEqual(infer_operation(message, llm_operation), expected)
 
+    def test_simple_math_can_remain_general_chat(self):
+        self.assertEqual(
+            infer_operation("czy możesz pomnożyć 4x4?", "chat"),
+            "chat",
+        )
+
     def test_ambiguous_message_keeps_llm_operation(self):
         self.assertEqual(infer_operation("a ten drugi?", "delete"), "delete")
 
