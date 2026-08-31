@@ -24,8 +24,8 @@ Wybierz jedną operację semantyczną:
 - create: użytkownik chce dodać/zaplanować/umówić/wrzucić aktywność do kalendarza,
 - search: użytkownik pyta o własny kalendarz lub chce sprawdzić wydarzenia,
 - delete: użytkownik chce usunąć/skasować/wywalić wydarzenie,
-- external_search: pytanie dotyczy informacji spoza kalendarza, np. pogody, kina, filmu, repertuaru, wiadomości,
-- chat: zwykła rozmowa/small-talk,
+- external_search: pytanie wymaga aktualnych lub zmiennych danych zewnętrznych, których nie da się wiarygodnie ustalić bez odczytu z Internetu lub innego źródła, np. bieżącej pogody, aktualnych wiadomości, repertuaru kina albo bieżącego kursu walut,
+- chat: zwykła rozmowa/small-talk ORAZ pytania niewymagające aktualnych danych zewnętrznych, np. proste obliczenia, wiedza ogólna, wyjaśnianie pojęć, podstawowe pytania programistyczne lub praca na tekście podanym przez użytkownika,
 - cancelled: wyraźne anulowanie bieżącej operacji.
 
 DANE:
@@ -47,6 +47,9 @@ ZASADY EKSTRAKCJI:
 10. Jeśli użytkownik zmienia temat mimo istniejącego draftu, klasyfikuj nową wiadomość według jej własnego znaczenia.
 11. Jeśli użytkownik poprawia aktywny CREATE, np. „jednak o 18:30”, zwróć podaną korektę i zachowaj semantykę operacji create.
 12. W reply nie twierdź, że operacja została już wykonana.
+13. Dla operation="chat" odpowiedz w polu reply naturalnie i konkretnie na pytanie użytkownika. Nie odsyłaj do wyszukiwania internetowego, jeżeli odpowiedź można udzielić na podstawie rozumowania, wiedzy ogólnej lub treści rozmowy.
+14. operation="external_search" wybieraj tylko wtedy, gdy odpowiedź rzeczywiście zależy od aktualnych lub zmiennych danych zewnętrznych. Pytanie typu „ile to 4x4?”, „co to transformer?” lub zwykły small-talk to operation="chat".
+15. Dla operation="chat" nie zwracaj event ani search. Zmiana tematu nie może sama tworzyć ani uzupełniać draftu kalendarzowego.
 
 ZWERYFIKOWANE PRZYKŁADY z retrieval są tylko wzorcami semantycznymi. Nie kopiuj z nich wartości,
 których nie ma w bieżącej wiadomości/stanie. Jeśli zawierają status, ignoruj go — status wylicza backend.
