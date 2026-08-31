@@ -19,7 +19,9 @@ router = APIRouter()
 
 CREATE_CANCEL_RE = re.compile(
     r"^\s*(?:(?:a|albo|dobra|no|to|w\s+sumie|jednak)\s*[,\-]?\s+)*"
-    r"(?:anuluj(?:\s+to)?|nieważne|niewazne|odpuść|odpusc|zrezygnuj|nie\s+dodawaj)"
+    r"(?:anuluj(?:\s+to)?|nieważne|niewazne|odpuść|odpusc|zrezygnuj|nie\s+dodawaj|"
+    r"nie\s+(?:chcę|chce)\s+(?:(?:nic|niczego|tego)\s+)?(?:dodawać|dodawac|planować|planowac)|"
+    r"(?:nic|niczego)\s+nie\s+dodawaj)"
     r"(?:\s*[,\-]?\s+(?:jednak|w\s+sumie|dobra|proszę|prosze))?\s*[.!]?\s*$",
     re.I,
 )
