@@ -48,6 +48,20 @@ class CreateDialogControlTests(unittest.TestCase):
         self.assertIsNone(result["event"])
         delegated.assert_not_called()
 
+    def test_natural_cancel_phrase_clears_create_draft(self):
+        draft = self._draft()
+        with (
+            patch.object(chat_flow.chat, "chat_endpoint") as delegated,
+            patch.object(chat_flow, "save_chat_turn_metric"),
+        ):
+            result = chat_flow.chat_endpoint(
+                self._request("nie chce nic dodawać", draft)
+            )
+
+        self.assertEqual(result["status"], "cancelled")
+        self.assertIsNone(result["event"])
+        delegated.assert_not_called()
+
     def test_colloquial_day_na_hour_is_added_to_create_draft(self):
         llm_result = {
             "operation": "chat",
