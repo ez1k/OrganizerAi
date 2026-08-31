@@ -62,6 +62,52 @@ class CreateDialogControlTests(unittest.TestCase):
         self.assertIsNone(result["event"])
         delegated.assert_not_called()
 
+    def test_generic_create_request_does_not_become_event_title(self):
+        self.assertIsNone(
+            chat_flow.chat._extract_create_title(
+                "a możesz dodać do kalendarza wydarzenie?"
+            )
+        )
+
+    def test_structured_continuation_supplies_missing_title_and_slots(self):
+        draft = {"operation": "create"}
+        with (
+            patch.object(chat_flow.chat, "chat_endpoint") as delegated,
+            patch.object(chat_flow.chat, "_create_confirmation_message", return_value="summary"),
+            patch.object(chat_flow, "save_chat_turn_metric"),
+        ):
+            result = chat_flow.chat_endpoint(
+                self._request("środa 5:00, lot do bari - 90 min", draft)
+            )
+
+        self.assertEqual(result["status"], "ready_for_confirmation")
+        self.assertEqual(result["event"]["title"], "lot do bari")
+        self.assertEqual(result["event"]["date_hint"], "środa")
+        self.assertEqual(result["event"]["time_hint"], "05:00")
+        self.assertEqual(result["event"]["duration_minutes"], 90)
+        delegated.assert_not_called()
+
+    def test_explicit_title_label_overrides_existing_create_title(self):
+        draft = {
+            "operation": "create",
+            "title": "błędny tytuł",
+            "date_hint": "środa",
+            "time_hint": "05:00",
+            "duration_minutes": 90,
+        }
+        with (
+            patch.object(chat_flow.chat, "chat_endpoint") as delegated,
+            patch.object(chat_flow.chat, "_create_confirmation_message", return_value="summary"),
+            patch.object(chat_flow, "save_chat_turn_metric"),
+        ):
+            result = chat_flow.chat_endpoint(
+                self._request("tytuł: lot do bari", draft)
+            )
+
+        self.assertEqual(result["status"], "ready_for_confirmation")
+        self.assertEqual(result["event"]["title"], "lot do bari")
+        delegated.assert_not_called()
+
     def test_colloquial_day_na_hour_is_added_to_create_draft(self):
         llm_result = {
             "operation": "chat",
