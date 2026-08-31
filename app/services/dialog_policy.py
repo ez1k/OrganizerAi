@@ -132,7 +132,6 @@ GENERIC_DELETE_TITLES = {
 GENERIC_CREATE_TITLES = {
     "wydarzenie",
     "event",
-    "spotkanie",
     "do kalendarza wydarzenie",
     "do kalendarza event",
     "wydarzenie do kalendarza",
