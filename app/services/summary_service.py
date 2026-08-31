@@ -232,7 +232,7 @@ def build_user_summary(user_id: str, *, days: int = 30) -> dict[str, Any]:
     except Exception as exc:
         completed_events = []
         calendar_available = False
-        calendar_error = str(exc)
+        calendar_error = "unavailable"
 
     return {
         "period_days": safe_days,
