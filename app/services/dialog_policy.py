@@ -32,11 +32,13 @@ SEARCH_INTENT_RE = re.compile(
 )
 DELETE_INTENT_RE = re.compile(r"\b(?:usuń|usun|skasuj|wywal)\b", re.I)
 EXTERNAL_INTENT_RE = re.compile(
-    r"\b(?:pogoda|pogodę|pogode|kino|kinie|film|filmy|repertuar|wiadomości|wiadomosci|kurs\s+walut)\b",
+    r"\b(?:pogoda|pogodę|pogode|kino|kinie|repertuar|wiadomości|wiadomosci|kurs\s+walut)\b",
     re.I,
 )
 CANCEL_INTENT_RE = re.compile(
-    r"\b(?:nieważne|niewazne|anuluj|odpuść|odpusc|zrezygnuj)\b",
+    r"\b(?:nieważne|niewazne|anuluj|odpuść|odpusc|zrezygnuj)\b"
+    r"|\bnie\s+(?:chcę|chce)\s+(?:(?:nic|niczego|tego)\s+)?(?:dodawać|dodawac|planować|planowac)\b"
+    r"|\b(?:nic|niczego)\s+nie\s+dodawaj\b",
     re.I,
 )
 CHAT_ONLY_RE = re.compile(
