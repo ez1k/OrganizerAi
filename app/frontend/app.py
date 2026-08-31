@@ -7,6 +7,7 @@ import os
 from datetime import datetime
 from uuid import uuid4
 
+import pandas as pd
 import requests
 import streamlit as st
 
@@ -27,6 +28,7 @@ FEEDBACK_STATUSES = {
 
 NAV_ITEMS = (
     ("Rozmowa", "💬"),
+    ("Podsumowanie", "📊"),
     ("Kalendarz", "📅"),
     ("Refleksje", "⭐"),
     ("Remindery", "🔔"),
@@ -36,6 +38,7 @@ NAV_ITEMS = (
 
 PAGE_TITLES = {
     "Rozmowa": ("Asystent organizacji czasu", "Zaplanuj, wyszukaj lub usuń wydarzenie w naturalnej rozmowie."),
+    "Podsumowanie": ("Podsumowanie", "Zobacz swoją aktywność, refleksje i sposób korzystania z OrganizerAI."),
     "Kalendarz": ("Kalendarz", "Najbliższe wydarzenia pobrane z Google Calendar."),
     "Refleksje": ("Refleksje po wydarzeniach", "Oceń zakończone aktywności i wykorzystaj wynik do personalizacji."),
     "Remindery": ("Remindery motywacyjne", "Zarządzaj przypomnieniami utworzonymi po pozytywnie ocenionych aktywnościach."),
@@ -773,6 +776,202 @@ def _render_reminders_page() -> None:
     render_due_motivation_reminders(API_URL, USER_ID)
 
 
+def _load_summary(days: int) -> dict:
+    return _get_json(
+        "/summary",
+        params={"user_id": USER_ID, "days": days},
+        timeout=40,
+    )
+
+
+def _render_summary_page() -> None:
+    period_col, refresh_col = st.columns([3, 1])
+    with period_col:
+        days = st.selectbox(
+            "Zakres podsumowania",
+            options=[7, 30, 90],
+            index=1,
+            format_func=lambda value: f"Ostatnie {value} dni",
+            key="summary_days",
+        )
+    with refresh_col:
+        st.write("")
+        st.write("")
+        if st.button("🔄 Odśwież", key="refresh_summary", use_container_width=True):
+            st.rerun()
+
+    try:
+        summary = _load_summary(days)
+    except requests.RequestException as exc:
+        st.error(f"Nie udało się pobrać podsumowania: {exc}")
+        return
+
+    if not summary.get("calendar_available", True):
+        st.warning(
+            "Nie udało się pobrać zakończonych wydarzeń z Google Calendar. "
+            "Pozostałe dane z refleksji, reminderów i metryk są nadal dostępne."
+        )
+
+    overview = summary.get("overview") or {}
+    metric_cols = st.columns(5)
+    metric_cols[0].metric("Zakończone wydarzenia", overview.get("completed_events", 0))
+    metric_cols[1].metric("Refleksje", overview.get("reflections", 0))
+    average_rating = overview.get("average_rating")
+    metric_cols[2].metric(
+        "Średnia ocena",
+        f"{average_rating:.2f}/5" if isinstance(average_rating, (int, float)) else "—",
+    )
+    metric_cols[3].metric("Warto powtórzyć", overview.get("worth_repeating", 0))
+    metric_cols[4].metric("Aktywne remindery", overview.get("active_reminders", 0))
+
+    st.divider()
+    activity_col, sentiment_col = st.columns(2, gap="large")
+
+    with activity_col:
+        st.markdown('<div class="oa-panel-title">📅 Moja aktywność</div>', unsafe_allow_html=True)
+        st.caption("Liczba zakończonych wydarzeń w kolejnych tygodniach.")
+        weekly = summary.get("weekly_activity") or []
+        if weekly:
+            activity_df = pd.DataFrame(weekly)
+            st.bar_chart(
+                activity_df,
+                x="label",
+                y="count",
+                x_label="Tydzień",
+                y_label="Zakończone wydarzenia",
+                use_container_width=True,
+            )
+        else:
+            st.info("Brak danych o zakończonych wydarzeniach w wybranym okresie.")
+
+    with sentiment_col:
+        st.markdown('<div class="oa-panel-title">🙂 Jak oceniałem aktywności?</div>', unsafe_allow_html=True)
+        st.caption("Sentyment zapisanych refleksji analizowanych przez moduł NLP.")
+        sentiments = summary.get("sentiments") or {}
+        sentiment_rows = [
+            {"Ocena": "Pozytywne", "Liczba": int(sentiments.get("positive", 0))},
+            {"Ocena": "Neutralne", "Liczba": int(sentiments.get("neutral", 0))},
+            {"Ocena": "Mieszane", "Liczba": int(sentiments.get("mixed", 0))},
+            {"Ocena": "Negatywne", "Liczba": int(sentiments.get("negative", 0))},
+        ]
+        if any(row["Liczba"] for row in sentiment_rows):
+            st.bar_chart(
+                pd.DataFrame(sentiment_rows),
+                x="Ocena",
+                y="Liczba",
+                x_label="Sentyment",
+                y_label="Liczba refleksji",
+                use_container_width=True,
+            )
+        else:
+            st.info("Brak przeanalizowanych refleksji w wybranym okresie.")
+
+    st.divider()
+    liked_col, repeat_col = st.columns([1.35, 0.65], gap="large")
+
+    with liked_col:
+        st.markdown('<div class="oa-panel-title">⭐ Co najbardziej mi się podobało?</div>', unsafe_allow_html=True)
+        top_activities = summary.get("top_activities") or []
+        if not top_activities:
+            st.info("Dodaj refleksje po wydarzeniach, aby zobaczyć tutaj najlepiej oceniane aktywności.")
+        else:
+            for item in top_activities:
+                title = html.escape(str(item.get("title") or "Aktywność"))
+                rating = item.get("average_rating")
+                rating_text = f"{rating:.2f}/5" if isinstance(rating, (int, float)) else "bez oceny liczbowej"
+                repeat_count = int(item.get("worth_repeating_count") or 0)
+                reflection_count = int(item.get("reflection_count") or 0)
+                repeat_text = (
+                    f" · warto powtórzyć: {repeat_count}×"
+                    if repeat_count
+                    else ""
+                )
+                st.markdown(
+                    f"""
+                    <div class="oa-card">
+                        <div class="oa-card-title">{title}</div>
+                        <div class="oa-card-meta">
+                            Średnia ocena: {html.escape(rating_text)}
+                            · refleksje: {reflection_count}{html.escape(repeat_text)}
+                        </div>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+
+    with repeat_col:
+        st.markdown('<div class="oa-panel-title">🔁 Czy warto powtarzać?</div>', unsafe_allow_html=True)
+        repeat = summary.get("worth_repeating") or {}
+        st.metric("Tak", int(repeat.get("yes", 0)))
+        st.metric("Nie", int(repeat.get("no", 0)))
+        st.metric("Brak decyzji", int(repeat.get("unknown", 0)))
+
+    st.divider()
+    reminder_col, assistant_col = st.columns(2, gap="large")
+
+    with reminder_col:
+        st.markdown('<div class="oa-panel-title">🔔 Moje przypomnienia</div>', unsafe_allow_html=True)
+        reminders = summary.get("reminders") or {}
+        reminder_metrics = st.columns(2)
+        reminder_metrics[0].metric("Aktywne", int(reminders.get("pending", 0)))
+        reminder_metrics[1].metric("Wykonane", int(reminders.get("completed", 0)))
+        reminder_metrics[0].metric("Dostarczone", int(reminders.get("delivered", 0)))
+        reminder_metrics[1].metric("Odrzucone", int(reminders.get("dismissed", 0)))
+        st.caption("Statusy dotyczą reminderów utworzonych w wybranym okresie.")
+
+    with assistant_col:
+        st.markdown('<div class="oa-panel-title">🤖 Jak korzystam z OrganizerAI?</div>', unsafe_allow_html=True)
+        usage = summary.get("assistant_usage") or {}
+        first_row = st.columns(3)
+        first_row[0].metric("Tury rozmowy", int(usage.get("turns", 0)))
+        first_row[1].metric("Sesje", int(usage.get("sessions", 0)))
+        first_row[2].metric("Wywołania LLM", int(usage.get("llm_calls", 0)))
+        second_row = st.columns(3)
+        second_row[0].metric("Tury bez LLM", int(usage.get("no_llm_turns", 0)))
+        second_row[1].metric("Wywołania Calendar", int(usage.get("calendar_calls", 0)))
+        second_row[2].metric(
+            "Śr. czas odpowiedzi",
+            f"{float(usage.get('avg_latency_ms') or 0):.0f} ms",
+        )
+
+        operations = usage.get("operations") or []
+        if operations:
+            operation_labels = {
+                "create": "CREATE",
+                "search": "SEARCH",
+                "delete": "DELETE",
+                "chat": "CHAT",
+                "external_search": "EXTERNAL",
+            }
+            operation_df = pd.DataFrame(
+                [
+                    {
+                        "Operacja": operation_labels.get(
+                            str(item.get("operation") or "chat"),
+                            str(item.get("operation") or "chat").upper(),
+                        ),
+                        "Liczba": int(item.get("count") or 0),
+                    }
+                    for item in operations
+                ]
+            )
+            st.bar_chart(
+                operation_df,
+                x="Operacja",
+                y="Liczba",
+                x_label="Rodzaj operacji",
+                y_label="Liczba tur",
+                use_container_width=True,
+            )
+
+        clarification_turns = int(usage.get("clarification_turns", 0))
+        if clarification_turns:
+            st.caption(
+                f"W {clarification_turns} turach system poprosił o doprecyzowanie danych "
+                "zamiast przyjmować brakujące wartości."
+            )
+
+
 def _clear_conversation() -> None:
     st.session_state.messages = []
     st.session_state.draft_event = None
@@ -837,6 +1036,8 @@ _render_notice()
 page = st.session_state.active_page
 if page == "Rozmowa":
     _render_chat_page()
+elif page == "Podsumowanie":
+    _render_summary_page()
 elif page == "Kalendarz":
     _render_calendar_page()
 elif page == "Refleksje":
