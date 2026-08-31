@@ -69,7 +69,6 @@ CREATE_FIELD_LABELS = {
 GENERIC_CREATE_TITLES = {
     "wydarzenie",
     "event",
-    "spotkanie",
     "do kalendarza wydarzenie",
     "do kalendarza event",
     "wydarzenie do kalendarza",
