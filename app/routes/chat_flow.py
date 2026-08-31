@@ -191,13 +191,17 @@ def _deterministic_create_fast_path(request: ChatRequest, state: dict) -> dict |
         request.message,
         continuation=state.get("operation") == "create",
     )
+    explicit_title_override = chat._extract_explicit_create_title(request.message)
+    if not explicit_title_override and state.get("operation") == "create":
+        explicit_title_override = chat._extract_structured_continuation_title(request.message)
 
-    # Continuations such as "jutro o 18 na 30 min" used to be parsed as if
-    # "jutro o 18 na" were a new title because it precedes the duration token.
-    # A previously validated title is authoritative unless the user starts an
-    # explicit new CREATE instruction containing another title.
-    if existing_title and not explicit_create_intent:
+    # Slot-only continuations such as "jutro o 18 na 30 min" must not replace
+    # an already validated title. A clearly supplied title ("tytuł: ..." or a
+    # structured "termin, tytuł - czas") is an explicit correction and may.
+    if existing_title and not explicit_create_intent and not explicit_title_override:
         fields.pop("title", None)
+    elif explicit_title_override:
+        fields["title"] = explicit_title_override
 
     delimited_title = _extract_delimited_create_title(request.message)
     if delimited_title:
