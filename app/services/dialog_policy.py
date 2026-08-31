@@ -129,6 +129,16 @@ GENERIC_DELETE_TITLES = {
     "ten pierwszy",
 }
 
+GENERIC_CREATE_TITLES = {
+    "wydarzenie",
+    "event",
+    "spotkanie",
+    "do kalendarza wydarzenie",
+    "do kalendarza event",
+    "wydarzenie do kalendarza",
+    "event do kalendarza",
+}
+
 
 def _normalized_text(value) -> str:
     return " ".join(str(value or "").strip().lower().split())
@@ -236,6 +246,20 @@ def _sanitize_event(event):
         return event
 
     sanitized = copy.deepcopy(event)
+
+    if "title" in sanitized:
+        title = _normalized_text(sanitized.get("title")).strip(" ,.;:!?-")
+        title_without_wrapper = re.sub(
+            r"^(?:mi\s+)?do\s+(?:mojego\s+)?kalendarza\s+",
+            "",
+            title,
+            flags=re.I,
+        ).strip(" ,.;:!?-")
+        if not title_without_wrapper or title_without_wrapper in GENERIC_CREATE_TITLES:
+            sanitized.pop("title", None)
+        else:
+            sanitized["title"] = title_without_wrapper
+
     if "date_hint" in sanitized:
         sanitized["date_hint"] = _canonicalize_date_hint(sanitized.get("date_hint"))
 
